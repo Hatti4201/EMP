@@ -7,13 +7,16 @@ require("dotenv").config();
 const app = express();
 app.use(cors());
 app.use(express.json());
-
+//  test
+app.get("/", (req, res) => {
+  res.send("API is running :) ");
+});
 // routes
 app.use("/api/auth", require("./routes/authRoutes"));
-// app.use("/api/onboarding", require("./routes/onboardingRoutes"));
-// app.use("/api/hr", require("./routes/hrRoutes"));
-// app.use("/api/visa-status", require("./routes/visaRoutes"));
-// app.use("/api/upload", require("./routes/uploadRoutes"));
+app.use("/api/onboarding", require("./routes/onboardingRoutes"));
+app.use("/api/hr", require("./routes/hrRoutes"));
+app.use("/api/visa-status", require("./routes/visaRoutes"));
+app.use("/api/upload", require("./routes/uploadRoutes"));
 
 // connect MongoDB
 mongoose

@@ -3,6 +3,8 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 
+const RegisterToken = require("../models/RegisterToken");
+
 const generateToken = (user) => {
   return jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
     expiresIn: process.env.TOKEN_EXPIRE || "3h",
@@ -10,15 +12,30 @@ const generateToken = (user) => {
 };
 
 exports.registerUser = async (req, res) => {
-  const { username, email, password, role } = req.body;
+  const { token, username, password } = req.body;
+
   try {
-    const existing = await User.findOne({ $or: [{ username }, { email }] });
-    if (existing) return res.status(400).json({ message: "User already exists" });
+    const regToken = await RegisterToken.findOne({ token });
+
+    if (!regToken || regToken.used || regToken.expiresAt < Date.now()) {
+      return res.status(400).json({ message: "Invalid or expired token" });
+    }
+
+    const existing = await User.findOne({ username });
+    if (existing) return res.status(400).json({ message: "Username exists" });
 
     const hashed = await bcrypt.hash(password, 10);
-    const user = await User.create({ username, email, password: hashed, role });
+    const user = await User.create({
+      username,
+      email: regToken.email,
+      password: hashed,
+      role: "employee",
+    });
 
-    res.status(201).json({ message: "User registered" });
+    regToken.used = true;
+    await regToken.save();
+
+    res.status(201).json({ message: "Registered successfully" });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
@@ -48,3 +65,5 @@ exports.getCurrentUser = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+
