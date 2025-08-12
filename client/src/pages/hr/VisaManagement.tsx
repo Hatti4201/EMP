@@ -46,7 +46,7 @@ import SearchBar from '../../components/search/SearchBar';
 import StatusChip from '../../components/common/StatusChip';
 import DocumentViewer from '../../components/documents/DocumentViewer';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
-import type { Employee, Document } from '../../types';
+import type { Employee, Document, VisaDocument } from '../../types';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -88,6 +88,63 @@ const VisaManagement: React.FC = () => {
     dispatch(fetchAllEmployees());
   }, [dispatch]);
 
+  // Debug log for employees data
+  useEffect(() => {
+    if (employees.length > 0) {
+      console.log('🔍 VisaManagement - Total employees loaded:', employees.length);
+    }
+  }, [employees]);
+
+  // Helper function to get employee visa documents with implicit approval logic
+  const getEmployeeVisaDocuments = (employee: Employee) => {
+    console.log(`📄 Getting visa documents for ${employee.firstName} ${employee.lastName}:`, {
+      visaDocuments: employee.visaDocuments,
+      documentCount: employee.visaDocuments?.length || 0,
+      documentTypes: employee.visaDocuments?.map(doc => doc.type) || []
+    });
+    
+    // Use the new visaDocuments field from backend
+    const visaDocuments = employee.visaDocuments || [];
+    
+    const docs = {
+      optReceipt: visaDocuments.find(doc => doc.type === 'OPT Receipt'),
+      optEad: visaDocuments.find(doc => doc.type === 'OPT EAD'),
+      i983: visaDocuments.find(doc => doc.type === 'I-983'),
+      i20: visaDocuments.find(doc => doc.type === 'I-20'),
+    };
+    
+    // Apply implicit approval logic: if later documents are approved, earlier ones should be considered approved too
+    const requiredDocTypes = ['OPT Receipt', 'OPT EAD', 'I-983', 'I-20'];
+    const getEffectiveStatus = (docType: string, doc: any) => {
+      if (!doc) return 'pending';
+      if (doc.status === 'approved') return 'approved';
+      if (doc.status === 'rejected') return 'rejected';
+      
+      // Check if any later document in the workflow is approved
+      const currentIndex = requiredDocTypes.indexOf(docType);
+      for (let i = currentIndex + 1; i < requiredDocTypes.length; i++) {
+        const laterDocType = requiredDocTypes[i];
+        const laterDoc = visaDocuments.find(d => d.type === laterDocType);
+        if (laterDoc && laterDoc.status === 'approved') {
+          console.log(`✅ ${docType} considered approved because ${laterDocType} is approved`);
+          return 'approved';
+        }
+      }
+      
+      return doc.status;
+    };
+    
+    // Apply effective status to all documents
+    const processedDocs = {
+      optReceipt: docs.optReceipt ? { ...docs.optReceipt, status: getEffectiveStatus('OPT Receipt', docs.optReceipt) } : null,
+      optEad: docs.optEad ? { ...docs.optEad, status: getEffectiveStatus('OPT EAD', docs.optEad) } : null,
+      i983: docs.i983 ? { ...docs.i983, status: getEffectiveStatus('I-983', docs.i983) } : null,
+      i20: docs.i20 ? { ...docs.i20, status: getEffectiveStatus('I-20', docs.i20) } : null,
+    };
+    
+    return processedDocs;
+  };
+
   // Filter employees based on search term
   const filteredEmployees = employees.filter(employee =>
     searchTerm.trim() === '' ||
@@ -97,29 +154,73 @@ const VisaManagement: React.FC = () => {
   );
 
   // Filter employees with OPT visa status for In Progress tab
-  const inProgressEmployees = filteredEmployees.filter(employee => 
-    employee.workAuthorization?.visaType === 'f1-cpt-opt' &&
-    employee.onboardingStatus === 'approved'
-  );
+  // In Progress: Lists all employees who have not yet uploaded and been approved for all required OPT documents
+  const inProgressEmployees = filteredEmployees.filter(employee => {
+    const hasOPTVisa = employee.workAuthorization?.visaType === 'f1-cpt-opt' || 
+                      employee.workAuthorization?.visaTitle === 'f1-cpt-opt';
+    
+    if (!hasOPTVisa) return false;
+    
+    // Get required OPT documents
+    const requiredDocTypes = ['OPT Receipt', 'OPT EAD', 'I-983', 'I-20'];
+    const docs = getEmployeeVisaDocuments(employee);
+    
+    // Check if all required documents are approved (using the same logic as getEmployeeVisaDocuments)
+    const optReceiptApproved = docs.optReceipt?.status === 'approved';
+    const optEadApproved = docs.optEad?.status === 'approved';
+    const i983Approved = docs.i983?.status === 'approved';
+    const i20Approved = docs.i20?.status === 'approved';
+    
+    const allDocumentsApproved = optReceiptApproved && optEadApproved && i983Approved && i20Approved;
+    
+    console.log(`🎫 In Progress filter: ${employee.firstName} ${employee.lastName} - All docs approved: ${allDocumentsApproved}, Qualifies: ${!allDocumentsApproved}`);
+    
+    // Only show employees who haven't completed all required documents
+    return !allDocumentsApproved;
+  });
 
   // All visa status employees for All tab
-  const allVisaEmployees = filteredEmployees.filter(employee => 
-    employee.workAuthorization?.visaType === 'f1-cpt-opt'
-  );
+  const allVisaEmployees = filteredEmployees.filter(employee => {
+    const hasOPTVisa = employee.workAuthorization?.visaType === 'f1-cpt-opt' || 
+                      employee.workAuthorization?.visaTitle === 'f1-cpt-opt';
+    
+    return hasOPTVisa;
+  });
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setActiveTab(newValue);
   };
 
-  const handleViewDocument = (document: Document) => {
-    setSelectedDocument(document);
+  const handleViewDocument = (document: Document | VisaDocument) => {
+    // Convert VisaDocument to Document format for viewer
+    const docForViewer: Document = 'uploadDate' in document ? document as Document : {
+      _id: '',
+      name: document.name || document.type,
+      type: document.type.toLowerCase().replace(' ', '-').replace('-', '') as any,
+      url: document.url || '',
+      uploadDate: document.uploadedAt?.toString() || '',
+      status: document.status,
+      feedback: document.feedback
+    };
+    setSelectedDocument(docForViewer);
     setViewerOpen(true);
   };
 
-  const handleReviewDocument = (employeeId: string, documentType: string, document: Document, action: 'approved' | 'rejected') => {
+  const handleReviewDocument = (employeeId: string, documentType: string, document: Document | VisaDocument, action: 'approved' | 'rejected') => {
     setSelectedEmployeeId(employeeId);
     setSelectedDocumentType(documentType);
-    setSelectedDocument(document);
+    
+    // Convert VisaDocument to Document format for state
+    const docForState: Document = 'uploadDate' in document ? document as Document : {
+      _id: '',
+      name: document.name || document.type,
+      type: document.type.toLowerCase().replace(' ', '-').replace('-', '') as any,
+      url: document.url || '',
+      uploadDate: document.uploadedAt?.toString() || '',
+      status: document.status,
+      feedback: document.feedback
+    };
+    setSelectedDocument(docForState);
     setActionType(action);
     
     if (action === 'rejected') {
@@ -164,37 +265,51 @@ const VisaManagement: React.FC = () => {
     }
   };
 
-  const getEmployeeVisaDocuments = (employee: Employee) => {
-    // This would normally come from a visa status object
-    // For now, we'll simulate the document structure
-    return {
-      optReceipt: employee.documents?.find(doc => doc.type === 'opt-receipt'),
-      optEad: employee.documents?.find(doc => doc.type === 'opt-ead'),
-      i983: employee.documents?.find(doc => doc.type === 'i983'),
-      i20: employee.documents?.find(doc => doc.type === 'i20'),
-    };
-  };
+
 
   const getNextStep = (employee: Employee) => {
-    const docs = getEmployeeVisaDocuments(employee);
+    // console.log(`🎯 Getting next step for ${employee.firstName} ${employee.lastName}:`, {
+    //   onboardingStatus: employee.onboardingStatus,
+    //   documents: employee.documents
+    // });
     
-    if (!docs.optReceipt) return 'Submit onboarding application';
-    if (docs.optReceipt.status === 'pending') return 'Wait for HR approval - OPT Receipt';
-    if (docs.optReceipt.status === 'rejected') return 'Resubmit OPT Receipt';
+    // Check onboarding status first
+    if (employee.onboardingStatus === 'never-submitted') {
+      return 'Submit onboarding application';
+    }
     
-    if (!docs.optEad) return 'Upload OPT EAD';
-    if (docs.optEad.status === 'pending') return 'Wait for HR approval - OPT EAD';
-    if (docs.optEad.status === 'rejected') return 'Resubmit OPT EAD';
+    if (employee.onboardingStatus === 'pending') {
+      return 'Wait for HR approval - Onboarding Application';
+    }
     
-    if (!docs.i983) return 'Upload I-983 Form';
-    if (docs.i983.status === 'pending') return 'Wait for HR approval - I-983';
-    if (docs.i983.status === 'rejected') return 'Resubmit I-983';
+    if (employee.onboardingStatus === 'rejected') {
+      return 'Resubmit onboarding application';
+    }
     
-    if (!docs.i20) return 'Upload I-20';
-    if (docs.i20.status === 'pending') return 'Wait for HR approval - I-20';
-    if (docs.i20.status === 'rejected') return 'Resubmit I-20';
+    // If onboarding is approved, check visa documents
+    if (employee.onboardingStatus === 'approved') {
+      const docs = getEmployeeVisaDocuments(employee);
+      
+      if (!docs.optReceipt) return 'Upload OPT Receipt';
+      if (docs.optReceipt.status === 'pending') return 'Wait for HR approval - OPT Receipt';
+      if (docs.optReceipt.status === 'rejected') return 'Resubmit OPT Receipt';
+      
+      if (!docs.optEad) return 'Upload OPT EAD';
+      if (docs.optEad.status === 'pending') return 'Wait for HR approval - OPT EAD';
+      if (docs.optEad.status === 'rejected') return 'Resubmit OPT EAD';
+      
+      if (!docs.i983) return 'Upload I-983 Form';
+      if (docs.i983.status === 'pending') return 'Wait for HR approval - I-983';
+      if (docs.i983.status === 'rejected') return 'Resubmit I-983';
+      
+      if (!docs.i20) return 'Upload I-20';
+      if (docs.i20.status === 'pending') return 'Wait for HR approval - I-20';
+      if (docs.i20.status === 'rejected') return 'Resubmit I-20';
+      
+      return 'All documents approved';
+    }
     
-    return 'All documents approved';
+    return 'Unknown status';
   };
 
   const getDaysRemaining = (endDate?: string) => {
@@ -228,8 +343,13 @@ const VisaManagement: React.FC = () => {
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', mr: 2 }}>
                   <Box>
                     <Typography variant="h6">
-                      {employee.firstName} {employee.lastName}
+                      {employee.firstName} {employee.middleName ? `${employee.middleName} ` : ''}{employee.lastName}
                     </Typography>
+                    {employee.preferredName && (
+                      <Typography variant="body2" color="textSecondary">
+                        Preferred: {employee.preferredName}
+                      </Typography>
+                    )}
                     <Typography variant="body2" color="textSecondary">
                       Next Step: {nextStep}
                     </Typography>
@@ -237,6 +357,9 @@ const VisaManagement: React.FC = () => {
                   <Box textAlign="right">
                     <Typography variant="body2">
                       {employee.workAuthorization?.visaTitle}
+                    </Typography>
+                    <Typography variant="caption" color="textSecondary">
+                      {employee.workAuthorization?.startDate} - {employee.workAuthorization?.endDate}
                     </Typography>
                     <Typography variant="body2" color="textSecondary">
                       {daysRemaining} remaining
@@ -252,92 +375,264 @@ const VisaManagement: React.FC = () => {
                   </Typography>
                   
                   {/* OPT Receipt */}
-                  {docs.optReceipt && (
-                    <Paper sx={{ p: 2, mb: 2 }}>
-                      <Box display="flex" justifyContent="space-between" alignItems="center">
-                        <Box>
-                          <Typography variant="h6">OPT Receipt</Typography>
-                          <Typography variant="body2" color="textSecondary">
-                            {docs.optReceipt.name}
-                          </Typography>
-                          <StatusChip status={docs.optReceipt.status} sx={{ mt: 1 }} />
-                        </Box>
-                        <Box display="flex" gap={1}>
+                  <Paper sx={{ p: 2, mb: 2 }}>
+                    <Box display="flex" justifyContent="space-between" alignItems="center">
+                      <Box>
+                        <Typography variant="h6">OPT Receipt</Typography>
+                        {docs.optReceipt ? (
+                          <>
+                            <Typography variant="body2" color="textSecondary">
+                              {docs.optReceipt.name}
+                            </Typography>
+                            <StatusChip status={docs.optReceipt.status} sx={{ mt: 1 }} />
+                          </>
+                        ) : (
+                          <>
+                            <Typography variant="body2" color="textSecondary">
+                              Waiting for employee to upload
+                            </Typography>
+                            <StatusChip status="pending" sx={{ mt: 1 }} />
+                          </>
+                        )}
+                      </Box>
+                      <Box display="flex" gap={1}>
+                        {docs.optReceipt ? (
+                          <>
+                            <Button
+                              size="small"
+                              startIcon={<Visibility />}
+                              onClick={() => handleViewDocument(docs.optReceipt!)}
+                            >
+                              Preview
+                            </Button>
+                            {docs.optReceipt.status === 'pending' && (
+                              <>
+                                <Button
+                                  size="small"
+                                  startIcon={<CheckCircle />}
+                                  color="success"
+                                  onClick={() => handleReviewDocument(employee._id, 'opt-receipt', docs.optReceipt!, 'approved')}
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="small"
+                                  startIcon={<Cancel />}
+                                  color="error"
+                                  onClick={() => handleReviewDocument(employee._id, 'opt-receipt', docs.optReceipt!, 'rejected')}
+                                >
+                                  Reject
+                                </Button>
+                              </>
+                            )}
+                          </>
+                        ) : (
                           <Button
                             size="small"
-                            startIcon={<Visibility />}
-                            onClick={() => handleViewDocument(docs.optReceipt!)}
+                            startIcon={<Send />}
+                            onClick={() => handleSendNotification(employee._id, 'opt-receipt')}
                           >
-                            Preview
+                            Send Reminder
                           </Button>
-                          {docs.optReceipt.status === 'pending' && (
-                            <>
-                              <Button
-                                size="small"
-                                startIcon={<CheckCircle />}
-                                color="success"
-                                                                 onClick={() => handleReviewDocument(employee._id, 'opt-receipt', docs.optReceipt!, 'approved')}
-                              >
-                                Approve
-                              </Button>
-                              <Button
-                                size="small"
-                                startIcon={<Cancel />}
-                                color="error"
-                                                                 onClick={() => handleReviewDocument(employee._id, 'opt-receipt', docs.optReceipt!, 'rejected')}
-                              >
-                                Reject
-                              </Button>
-                            </>
-                          )}
-                        </Box>
+                        )}
                       </Box>
-                    </Paper>
-                  )}
+                    </Box>
+                  </Paper>
 
-                  {/* Similar structure for other documents */}
-                  {docs.optEad && (
-                    <Paper sx={{ p: 2, mb: 2 }}>
-                      <Box display="flex" justifyContent="space-between" alignItems="center">
-                        <Box>
-                          <Typography variant="h6">OPT EAD</Typography>
-                          <Typography variant="body2" color="textSecondary">
-                            {docs.optEad.name}
-                          </Typography>
-                          <StatusChip status={docs.optEad.status} sx={{ mt: 1 }} />
-                        </Box>
-                        <Box display="flex" gap={1}>
+                  {/* OPT EAD */}
+                  <Paper sx={{ p: 2, mb: 2 }}>
+                    <Box display="flex" justifyContent="space-between" alignItems="center">
+                      <Box>
+                        <Typography variant="h6">OPT EAD</Typography>
+                        {docs.optEad ? (
+                          <>
+                            <Typography variant="body2" color="textSecondary">
+                              {docs.optEad.name}
+                            </Typography>
+                            <StatusChip status={docs.optEad.status} sx={{ mt: 1 }} />
+                          </>
+                        ) : (
+                          <>
+                            <Typography variant="body2" color="textSecondary">
+                              Waiting for employee to upload
+                            </Typography>
+                            <StatusChip status="pending" sx={{ mt: 1 }} />
+                          </>
+                        )}
+                      </Box>
+                      <Box display="flex" gap={1}>
+                        {docs.optEad ? (
+                          <>
+                            <Button
+                              size="small"
+                              startIcon={<Visibility />}
+                              onClick={() => handleViewDocument(docs.optEad!)}
+                            >
+                              Preview
+                            </Button>
+                            {docs.optEad.status === 'pending' && (
+                              <>
+                                <Button
+                                  size="small"
+                                  startIcon={<CheckCircle />}
+                                  color="success"
+                                  onClick={() => handleReviewDocument(employee._id, 'opt-ead', docs.optEad!, 'approved')}
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="small"
+                                  startIcon={<Cancel />}
+                                  color="error"
+                                  onClick={() => handleReviewDocument(employee._id, 'opt-ead', docs.optEad!, 'rejected')}
+                                >
+                                  Reject
+                                </Button>
+                              </>
+                            )}
+                          </>
+                        ) : (
                           <Button
                             size="small"
-                            startIcon={<Visibility />}
-                            onClick={() => handleViewDocument(docs.optEad!)}
+                            startIcon={<Send />}
+                            onClick={() => handleSendNotification(employee._id, 'opt-ead')}
                           >
-                            Preview
+                            Send Reminder
                           </Button>
-                          {docs.optEad.status === 'pending' && (
-                            <>
-                              <Button
-                                size="small"
-                                startIcon={<CheckCircle />}
-                                color="success"
-                                                                 onClick={() => handleReviewDocument(employee._id, 'opt-ead', docs.optEad!, 'approved')}
-                              >
-                                Approve
-                              </Button>
-                              <Button
-                                size="small"
-                                startIcon={<Cancel />}
-                                color="error"
-                                                                 onClick={() => handleReviewDocument(employee._id, 'opt-ead', docs.optEad!, 'rejected')}
-                              >
-                                Reject
-                              </Button>
-                            </>
-                          )}
-                        </Box>
+                        )}
                       </Box>
-                    </Paper>
-                  )}
+                    </Box>
+                  </Paper>
+
+                  {/* I-983 */}
+                  <Paper sx={{ p: 2, mb: 2 }}>
+                    <Box display="flex" justifyContent="space-between" alignItems="center">
+                      <Box>
+                        <Typography variant="h6">I-983 Form</Typography>
+                        {docs.i983 ? (
+                          <>
+                            <Typography variant="body2" color="textSecondary">
+                              {docs.i983.name}
+                            </Typography>
+                            <StatusChip status={docs.i983.status} sx={{ mt: 1 }} />
+                          </>
+                        ) : (
+                          <>
+                            <Typography variant="body2" color="textSecondary">
+                              Waiting for employee to upload
+                            </Typography>
+                            <StatusChip status="pending" sx={{ mt: 1 }} />
+                          </>
+                        )}
+                      </Box>
+                      <Box display="flex" gap={1}>
+                        {docs.i983 ? (
+                          <>
+                            <Button
+                              size="small"
+                              startIcon={<Visibility />}
+                              onClick={() => handleViewDocument(docs.i983!)}
+                            >
+                              Preview
+                            </Button>
+                            {docs.i983.status === 'pending' && (
+                              <>
+                                <Button
+                                  size="small"
+                                  startIcon={<CheckCircle />}
+                                  color="success"
+                                  onClick={() => handleReviewDocument(employee._id, 'I-983', docs.i983!, 'approved')}
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="small"
+                                  startIcon={<Cancel />}
+                                  color="error"
+                                  onClick={() => handleReviewDocument(employee._id, 'I-983', docs.i983!, 'rejected')}
+                                >
+                                  Reject
+                                </Button>
+                              </>
+                            )}
+                          </>
+                        ) : (
+                          <Button
+                            size="small"
+                            startIcon={<Send />}
+                            onClick={() => handleSendNotification(employee._id, 'I-983')}
+                          >
+                            Send Reminder
+                          </Button>
+                        )}
+                      </Box>
+                    </Box>
+                  </Paper>
+
+                  {/* I-20 */}
+                  <Paper sx={{ p: 2, mb: 2 }}>
+                    <Box display="flex" justifyContent="space-between" alignItems="center">
+                      <Box>
+                        <Typography variant="h6">I-20</Typography>
+                        {docs.i20 ? (
+                          <>
+                            <Typography variant="body2" color="textSecondary">
+                              {docs.i20.name}
+                            </Typography>
+                            <StatusChip status={docs.i20.status} sx={{ mt: 1 }} />
+                          </>
+                        ) : (
+                          <>
+                            <Typography variant="body2" color="textSecondary">
+                              Waiting for employee to upload
+                            </Typography>
+                            <StatusChip status="pending" sx={{ mt: 1 }} />
+                          </>
+                        )}
+                      </Box>
+                      <Box display="flex" gap={1}>
+                        {docs.i20 ? (
+                          <>
+                            <Button
+                              size="small"
+                              startIcon={<Visibility />}
+                              onClick={() => handleViewDocument(docs.i20!)}
+                            >
+                              Preview
+                            </Button>
+                            {docs.i20.status === 'pending' && (
+                              <>
+                                <Button
+                                  size="small"
+                                  startIcon={<CheckCircle />}
+                                  color="success"
+                                  onClick={() => handleReviewDocument(employee._id, 'I-20', docs.i20!, 'approved')}
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="small"
+                                  startIcon={<Cancel />}
+                                  color="error"
+                                  onClick={() => handleReviewDocument(employee._id, 'I-20', docs.i20!, 'rejected')}
+                                >
+                                  Reject
+                                </Button>
+                              </>
+                            )}
+                          </>
+                        ) : (
+                          <Button
+                            size="small"
+                            startIcon={<Send />}
+                            onClick={() => handleSendNotification(employee._id, 'I-20')}
+                          >
+                            Send Reminder
+                          </Button>
+                        )}
+                      </Box>
+                    </Box>
+                  </Paper>
 
                   {/* Send Notification Button */}
                   {nextStep.includes('Upload') && (
@@ -387,14 +682,19 @@ const VisaManagement: React.FC = () => {
           <TableBody>
             {allVisaEmployees.map((employee) => {
               const docs = getEmployeeVisaDocuments(employee);
-                             const approvedDocs = Object.values(docs).filter((doc): doc is Document => doc !== undefined && doc.status === 'approved');
+                             const approvedDocs = Object.values(docs).filter(doc => doc !== null && doc !== undefined && doc.status === 'approved');
               
               return (
                 <TableRow key={employee._id}>
                   <TableCell>
                     <Typography variant="body1">
-                      {employee.firstName} {employee.lastName}
+                      {employee.firstName} {employee.middleName ? `${employee.middleName} ` : ''}{employee.lastName}
                     </Typography>
+                    {employee.preferredName && (
+                      <Typography variant="caption" color="textSecondary">
+                        Preferred: {employee.preferredName}
+                      </Typography>
+                    )}
                     <Typography variant="body2" color="textSecondary">
                       {employee.email}
                     </Typography>
@@ -420,7 +720,7 @@ const VisaManagement: React.FC = () => {
                       {approvedDocs.length}/4 approved
                     </Typography>
                     <Box display="flex" gap={0.5} mt={0.5}>
-                      {approvedDocs.map((doc, index) => (
+                      {approvedDocs.map((doc, index) => doc && (
                         <Button
                           key={index}
                           size="small"

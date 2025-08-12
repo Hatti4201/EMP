@@ -16,15 +16,21 @@ import {
   CircularProgress,
   Chip,
 } from '@mui/material';
+import {
+  Visibility,
+  Download,
+} from '@mui/icons-material';
+
 import { useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { submitOnboardingApplication, fetchEmployeeProfile } from '../../store/slices/employeeSlice';
+import { submitOnboardingApplication, fetchEmployeeProfile, fetchOnboardingApplication, downloadFile, fetchVisaStatus } from '../../store/slices/employeeSlice';
 
 // Import reusable components
 import FormField from '../../components/forms/FormField';
 import FormSelect from '../../components/forms/FormSelect';
 import FileUpload from '../../components/forms/FileUpload';
 import StatusChip from '../../components/common/StatusChip';
+
 import type { OnboardingForm } from '../../types';
 
 // Validation schema
@@ -104,7 +110,7 @@ const Onboarding: React.FC = () => {
   const [activeStep, setActiveStep] = useState(0);
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
-  const { profile, onboardingApplication, loading, error } = useAppSelector((state) => state.employee);
+  const { profile, onboardingApplication, visaStatus, loading, error } = useAppSelector((state) => state.employee);
   const { user } = useAppSelector((state) => state.auth);
 
   const methods = useForm<OnboardingForm>({
@@ -156,31 +162,152 @@ const Onboarding: React.FC = () => {
     mode: 'onChange',
   });
 
-  const { handleSubmit, watch, setValue, getValues, trigger } = methods;
+  const { handleSubmit, watch, setValue, getValues, trigger, formState: { errors: formErrors } } = methods;
   const watchedValues = watch();
 
   useEffect(() => {
+    // Try to fetch profile, but don't block the form if it fails
     dispatch(fetchEmployeeProfile());
+    // Fetch existing onboarding application
+    dispatch(fetchOnboardingApplication());
+    // Fetch visa status to show visa documents
+    dispatch(fetchVisaStatus());
   }, [dispatch]);
 
   useEffect(() => {
     // Pre-fill email from user data
     if (user?.email) {
       // Email is read-only, set in the UI display
+      console.log('✅ User email available:', user.email);
+    } else {
+      console.log('⚠️ No user email found');
     }
   }, [user]);
 
   // Check application status and redirect accordingly
   useEffect(() => {
-    if (profile?.onboardingStatus === 'approved') {
-      navigate('/personal-info');
+    const normalizedStatus = profile?.onboardingStatus?.trim?.().toLowerCase();
+    if (normalizedStatus === 'approved') {
+      console.log('✅ Onboarding: Status is approved, redirecting to employee home');
+      navigate('/employee/home');
     }
   }, [profile, navigate]);
 
   const handleNext = async () => {
-    const isStepValid = await trigger();
-    if (isStepValid) {
-      setActiveStep((prevStep) => prevStep + 1);
+    console.log('🔄 Validating step', activeStep);
+    console.log('📝 Current form values:', getValues());
+    
+    // Define fields to validate for each step
+    let fieldsToValidate: string[] = [];
+    
+    switch (activeStep) {
+      case 0: // Personal Information
+        fieldsToValidate = ['firstName', 'lastName', 'ssn', 'dateOfBirth', 'gender'];
+        break;
+      case 1: // Address & Contact
+        fieldsToValidate = [
+          'address.building', 
+          'address.street', 
+          'address.city', 
+          'address.state', 
+          'address.zip',
+          'phoneNumbers.cell'
+        ];
+        break;
+      case 2: // Work Authorization
+        fieldsToValidate = ['workAuthorization.isPermanentResident'];
+        // Add conditional validation based on user selection
+        const workAuth = getValues('workAuthorization');
+        if (workAuth?.isPermanentResident) {
+          fieldsToValidate.push('workAuthorization.citizenshipStatus');
+        } else {
+          fieldsToValidate.push(
+            'workAuthorization.visaType', 
+            'workAuthorization.startDate', 
+            'workAuthorization.endDate'
+          );
+          if (workAuth?.visaType === 'other') {
+            fieldsToValidate.push('workAuthorization.visaTitle');
+          }
+        }
+        break;
+      case 3: // Reference & Emergency Contacts
+        // Validate emergency contacts array
+        const emergencyContacts = getValues('emergencyContacts') || [];
+        console.log('🔍 Emergency contacts data:', emergencyContacts);
+        
+        if (emergencyContacts.length === 0) {
+          alert('Please add at least one emergency contact.');
+          return;
+        }
+        
+        // Check if all emergency contacts have required fields
+        let allContactsValid = true;
+        const missingFields: string[] = [];
+        
+        emergencyContacts.forEach((contact, index) => {
+          const requiredFields = ['firstName', 'lastName', 'phone', 'email', 'relationship'];
+          requiredFields.forEach(field => {
+            if (!contact[field] || contact[field].trim() === '') {
+              allContactsValid = false;
+              missingFields.push(`Emergency Contact ${index + 1}: ${field}`);
+            }
+          });
+        });
+        
+        if (!allContactsValid) {
+          alert(`Please fill in all required fields for emergency contacts:\n${missingFields.join('\n')}`);
+          return;
+        }
+        
+        // If we get here, emergency contacts are valid
+        console.log('✅ Emergency contacts validation passed');
+        setActiveStep((prevStep) => prevStep + 1);
+        return;
+        
+      case 4: // Documents & Review
+        // No required validation for documents step
+        fieldsToValidate = [];
+        break;
+      default:
+        fieldsToValidate = [];
+    }
+    
+    try {
+      let isValid = true;
+      
+      if (fieldsToValidate.length > 0) {
+        // Validate only the specified fields for this step
+        isValid = await trigger(fieldsToValidate as any);
+      }
+      
+      console.log('✅ Validation result:', isValid);
+      console.log('🔍 Fields validated:', fieldsToValidate);
+      
+      if (isValid) {
+        console.log('🎯 Moving to next step');
+        setActiveStep((prevStep) => prevStep + 1);
+      } else {
+        console.log('❌ Validation failed for step', activeStep);
+        
+        // Get errors for the current step only
+        const currentStepErrors = Object.keys(formErrors).filter(field => 
+          fieldsToValidate.some(validatedField => 
+            field.startsWith(validatedField.split('.')[0])
+          )
+        );
+        
+        console.log('Fields with errors in current step:', currentStepErrors);
+        
+        if (currentStepErrors.length > 0) {
+          alert(`Please fill in all required fields in this step before proceeding. Missing: ${currentStepErrors.join(', ')}`);
+        } else {
+          alert('Please fill in all required fields in this step before proceeding.');
+        }
+      }
+    } catch (error) {
+      console.error('❌ Validation error:', error);
+      alert('Please check all fields in this step and try again.');
     }
   };
 
@@ -189,13 +316,73 @@ const Onboarding: React.FC = () => {
   };
 
   const onSubmit = async (data: OnboardingForm) => {
-    try {
-      await dispatch(submitOnboardingApplication(data)).unwrap();
-      // Show success message and redirect
-      navigate('/personal-info');
-    } catch (error) {
-      console.error('Failed to submit application:', error);
+    console.log('🚀 Starting onboarding submission...');
+    console.log('📝 Form data:', data);
+    
+    // Check if user has valid token
+    const token = localStorage.getItem('authToken');
+    console.log('🔑 Auth token exists:', !!token);
+    console.log('👤 Current user:', user);
+    
+    if (!token) {
+      console.error('❌ No auth token found in localStorage');
+      alert('Authentication error: Please login again');
+      navigate('/login');
+      return;
     }
+    
+    try {
+      console.log('🔄 Dispatching submitOnboardingApplication...');
+      const result = await dispatch(submitOnboardingApplication(data)).unwrap();
+      console.log('✅ Submission successful:', result);
+      
+      // Show success message and redirect
+      alert('Application submitted successfully!');
+      navigate('/employee/personal-information');
+    } catch (error) {
+      console.error('❌ Submission failed:', error);
+      
+      if (typeof error === 'string' && error.includes('token')) {
+        alert('Authentication error: Please login again');
+        navigate('/login');
+      } else {
+        alert(`Submission failed: ${error}`);
+      }
+    }
+  };
+
+  // Add a click handler to debug the submit button
+  const handleSubmitClick = () => {
+    console.log('🖱️ Submit button clicked!');
+    console.log('📊 Current form state:');
+    console.log('- Active step:', activeStep);
+    console.log('- Steps length:', steps.length);
+    console.log('- Is last step:', activeStep === steps.length - 1);
+    console.log('- Loading state:', loading);
+    console.log('- Form values:', getValues());
+    
+    // Manually trigger form validation
+    trigger().then(isValid => {
+      console.log('✅ Form validation result:', isValid);
+      if (!isValid) {
+        console.log('❌ Form validation errors:', methods.formState.errors);
+        
+        // Detailed debugging for emergencyContacts
+        const emergencyContacts = getValues('emergencyContacts');
+        console.log('🔍 Emergency contacts detailed check:', emergencyContacts);
+        
+        if (emergencyContacts && emergencyContacts.length > 0) {
+          emergencyContacts.forEach((contact, index) => {
+            console.log(`👤 Contact ${index + 1}:`, contact);
+            console.log(`- firstName: "${contact.firstName}" (empty: ${!contact.firstName})`);
+            console.log(`- lastName: "${contact.lastName}" (empty: ${!contact.lastName})`);
+            console.log(`- phone: "${contact.phone}" (empty: ${!contact.phone})`);
+            console.log(`- email: "${contact.email}" (empty: ${!contact.email})`);
+            console.log(`- relationship: "${contact.relationship}" (empty: ${!contact.relationship})`);
+          });
+        }
+      }
+    });
   };
 
   const addEmergencyContact = () => {
@@ -430,9 +617,6 @@ const Onboarding: React.FC = () => {
       <Grid item xs={12} sm={6}>
         <FormField name="reference.email" label="Email" type="email" />
       </Grid>
-      <Grid item xs={12}>
-        <FormField name="reference.relationship" label="Relationship" />
-      </Grid>
 
       <Grid item xs={12}>
         <Divider sx={{ my: 2 }} />
@@ -485,6 +669,172 @@ const Onboarding: React.FC = () => {
           </Paper>
         </Grid>
       ))}
+    </Grid>
+  );
+
+  const handleDownloadDocument = (document: any) => {
+    if (document.url) {
+      // Extract filename from URL
+      const filename = document.url.split('/').pop() || document.name;
+      dispatch(downloadFile(filename));
+    }
+  };
+
+  const renderPendingView = () => (
+    <Grid container spacing={3}>
+      <Grid item xs={12}>
+        <Alert severity="info" sx={{ mb: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Application Status: Pending Review
+          </Typography>
+          <Typography variant="body1">
+            Please wait for HR to review your application. You can view your submitted information and documents below.
+          </Typography>
+        </Alert>
+      </Grid>
+
+      <Grid item xs={12}>
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="subtitle1" gutterBottom>
+            Visa Documentation
+          </Typography>
+          
+          {(() => {
+            console.log('📋 Visa Documentation Data:', {
+              visaStatus: visaStatus?.steps
+            });
+            
+            // Create a comprehensive list of visa documents with status
+            const visaDocuments = [];
+            
+            // 1. OPT Receipt - check both sources
+            const optReceiptFromVisa = visaStatus?.steps?.find(step => step.type === 'OPT Receipt');
+            
+            if (optReceiptFromVisa) {
+              visaDocuments.push({
+                type: 'OPT Receipt',
+                status: optReceiptFromVisa.status,
+                fileName: optReceiptFromVisa.file ? optReceiptFromVisa.file.split('/').pop() : 'N/A',
+                filePath: optReceiptFromVisa.file,
+                uploadDate: optReceiptFromVisa.uploadedAt
+              });
+            }
+            
+            // 2. Other visa documents from visa status
+            if (visaStatus?.steps) {
+              const otherDocs = visaStatus.steps
+                .filter(step => step.type !== 'OPT Receipt')
+                .map(step => ({
+                  type: step.type,
+                  status: step.status,
+                  fileName: step.file ? step.file.split('/').pop() : 'N/A',
+                  filePath: step.file,
+                  uploadDate: step.uploadedAt
+                }));
+              visaDocuments.push(...otherDocs);
+            }
+            
+            console.log('📋 Processed visa documents:', visaDocuments);
+            
+            if (visaDocuments.length === 0) {
+              return (
+                <Typography variant="body2" color="textSecondary">
+                  No visa documents uploaded yet.
+                </Typography>
+              );
+            }
+            
+            return visaDocuments.map((doc, index) => (
+              <Box key={index} sx={{ mb: 2, p: 2, border: '1px solid #e0e0e0', borderRadius: 1 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                    {doc.type}: 
+                    <Chip 
+                      label={doc.status} 
+                      size="small" 
+                      color={doc.status === 'approved' ? 'success' : doc.status === 'rejected' ? 'error' : 'warning'}
+                      sx={{ ml: 1 }}
+                    />
+                  </Typography>
+                </Box>
+                
+                {doc.filePath && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="body2" color="textSecondary">
+                      File: {doc.fileName}
+                    </Typography>
+                    {doc.uploadDate && (
+                      <Typography variant="caption" color="textSecondary">
+                        • Uploaded: {new Date(doc.uploadDate).toLocaleDateString()}
+                      </Typography>
+                    )}
+                    <Box sx={{ ml: 'auto', display: 'flex', gap: 1 }}>
+                      <Button
+                        size="small"
+                        startIcon={<Visibility />}
+                        onClick={() => {
+                          const url = `http://localhost:8000${doc.filePath}`;
+                          window.open(url, '_blank');
+                        }}
+                      >
+                        Preview
+                      </Button>
+                      <Button
+                        size="small"
+                        startIcon={<Download />}
+                        onClick={async () => {
+                          try {
+                            const url = `http://localhost:8000${doc.filePath}`;
+                            console.log('📥 Downloading file from URL:', url);
+                            
+                            // Fetch the file as blob
+                            const response = await fetch(url);
+                            if (!response.ok) {
+                              throw new Error(`HTTP error! status: ${response.status}`);
+                            }
+                            
+                            const blob = await response.blob();
+                            console.log('📥 File blob received:', blob.size, 'bytes');
+                            
+                            // Create blob URL and download
+                            const blobUrl = window.URL.createObjectURL(blob);
+                            const link = document.createElement('a');
+                            link.href = blobUrl;
+                            link.download = doc.fileName || 'document';
+                            link.style.display = 'none';
+                            
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                            
+                            // Clean up blob URL
+                            setTimeout(() => {
+                              window.URL.revokeObjectURL(blobUrl);
+                            }, 100);
+                            
+                            console.log('📥 Download initiated for:', doc.fileName);
+                          } catch (error) {
+                            console.error('📥 Download failed:', error);
+                            alert('Download failed. Please try again.');
+                          }
+                        }}
+                      >
+                        Download
+                      </Button>
+                    </Box>
+                  </Box>
+                )}
+                
+                {!doc.filePath && (
+                  <Typography variant="body2" color="textSecondary">
+                    No file uploaded yet
+                  </Typography>
+                )}
+              </Box>
+            ));
+          })()}
+        </Paper>
+      </Grid>
     </Grid>
   );
 
@@ -572,11 +922,21 @@ const Onboarding: React.FC = () => {
         </Alert>
       )}
 
+      {/* Show pending view if application status is pending */}
+      {onboardingApplication && onboardingApplication.status === 'pending' && (
+        <Paper sx={{ p: 4, borderRadius: 2 }}>
+          {renderPendingView()}
+        </Paper>
+      )}
+
       {/* Show form if no application or if rejected (can resubmit) */}
       {(!onboardingApplication || onboardingApplication.status === 'rejected') && (
         <Paper sx={{ p: 4, borderRadius: 2 }}>
           <FormProvider {...methods}>
-            <form onSubmit={handleSubmit(onSubmit)}>
+            <form onSubmit={(e) => {
+              console.log('📋 Form onSubmit triggered!');
+              return handleSubmit(onSubmit)(e);
+            }}>
               {/* Progress Stepper */}
               <Stepper activeStep={activeStep} sx={{ mb: 4 }}>
                 {steps.map((label) => (
@@ -618,6 +978,7 @@ const Onboarding: React.FC = () => {
                       variant="contained"
                       disabled={loading}
                       size="large"
+                      onClick={handleSubmitClick}
                     >
                       {loading ? <CircularProgress size={24} /> : 'Submit Application'}
                     </Button>

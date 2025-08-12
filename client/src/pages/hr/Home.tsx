@@ -46,10 +46,21 @@ const HRHome: React.FC = () => {
   const { dashboardStats, pendingApplications, employees, loading, error } = useAppSelector((state) => state.hr);
 
   useEffect(() => {
+    console.log('🏠 HR Home component mounted');
+    console.log('📊 Current HR state:', { dashboardStats, pendingApplications, employees, loading, error });
+    
+    const token = localStorage.getItem('authToken');
+    console.log('🔑 Auth token exists:', !!token);
+    
     dispatch(fetchDashboardStats());
     dispatch(fetchPendingApplications());
     dispatch(fetchAllEmployees());
   }, [dispatch]);
+
+  // Add debug logs for state changes
+  useEffect(() => {
+    console.log('📊 HR State updated:', { dashboardStats, pendingApplications, employees: employees?.length, loading, error });
+  }, [dashboardStats, pendingApplications, employees, loading, error]);
 
   return (
     <Box sx={{ 

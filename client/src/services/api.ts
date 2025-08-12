@@ -5,7 +5,7 @@ class ApiService {
 
   constructor() {
     this.api = axios.create({
-      baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api',
+      baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api',
       timeout: 10000,
       headers: {
         'Content-Type': 'application/json',
@@ -37,9 +37,15 @@ class ApiService {
       },
       (error: AxiosError) => {
         if (error.response?.status === 401) {
-          // Token expired or invalid
-          localStorage.removeItem('authToken');
-          window.location.href = '/login';
+          // Only redirect on 401 if not on public pages (register, login)
+          const currentPath = window.location.pathname;
+          const isPublicPage = ['/login', '/register'].includes(currentPath) || currentPath.startsWith('/register');
+          
+          if (!isPublicPage) {
+            // Token expired or invalid - only redirect if not on public pages
+            localStorage.removeItem('authToken');
+            window.location.href = '/login';
+          }
         }
         return Promise.reject(error);
       }
@@ -112,12 +118,15 @@ class ApiService {
     getStatus: () => this.api.get('/visa-status'),
 
     // Upload visa document
-    uploadDocument: (formData: FormData) =>
-      this.api.post('/visa-status/upload', formData, {
+    uploadDocument: (formData: FormData) => {
+      console.log('🌐 API: Uploading visa document to /visa-status/upload');
+      console.log('🌐 API: FormData keys:', Array.from(formData.keys()));
+      return this.api.post('/visa-status/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-      }),
+      });
+    },
   };
 
   // 👩‍💼 6️⃣ HR Management Module
@@ -127,13 +136,18 @@ class ApiService {
 
     // 👥 Employee Management
     employees: {
-      // Get all employees
-      getAll: () => this.api.get('/hr/employees'),
+      // Get all employees (with optional search)
+      getAll: (searchQuery?: string) => {
+        const url = searchQuery 
+          ? `/hr/employees?search=${encodeURIComponent(searchQuery)}`
+          : '/hr/employees';
+        return this.api.get(url);
+      },
 
       // Get employee details
       getById: (id: string) => this.api.get(`/hr/employees/${id}`),
 
-      // Search employees
+      // Search employees (deprecated - use getAll with searchQuery)
       search: (query: string) => this.api.get(`/hr/employees?search=${encodeURIComponent(query)}`),
     },
 
@@ -169,15 +183,33 @@ class ApiService {
         this.api.post('/hr/token', data),
     },
 
+    // 📧 Email Configuration Testing
+    email: {
+      // Test email configuration
+      testConfig: () => this.api.get('/hr/test-email'),
+    },
+
     // 🛂 Visa Document Management
     documents: {
       // Review/approve visa document
       review: (employeeId: string, data: { type: string; status: 'approved' | 'rejected'; feedback?: string }) =>
-        this.api.put(`/hr/document/${employeeId}`, data),
+        this.api.post('/hr/review-visa-document', { 
+          employeeId, 
+          documentType: data.type, 
+          status: data.status, 
+          feedback: data.feedback 
+        }),
 
       // Send notification email
       sendNotification: (employeeId: string, data: { type: string }) =>
-        this.api.post(`/hr/notification/${employeeId}`, data),
+        this.api.post('/hr/send-notification', { employeeId, type: data.type }),
+    },
+
+    // 🔄 Status Management
+    status: {
+      // Trigger onboarding status check
+      checkOnboardingStatus: (employeeId: string) => 
+        this.api.post(`/hr/check-onboarding-status/${employeeId}`),
     },
   };
 

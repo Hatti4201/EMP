@@ -12,6 +12,7 @@ import {
   Box,
   Alert,
   CircularProgress,
+  Snackbar,
 } from '@mui/material';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { loginUser, clearError } from '../../store/slices/authSlice';
@@ -27,6 +28,8 @@ const Login: React.FC = () => {
   const location = useLocation();
   const dispatch = useAppDispatch();
   const { loading, error, isAuthenticated, user } = useAppSelector((state) => state.auth);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [showSuccessSnackbar, setShowSuccessSnackbar] = useState(false);
 
   const {
     register,
@@ -46,10 +49,24 @@ const Login: React.FC = () => {
   useEffect(() => {
     // Clear error when component mounts
     dispatch(clearError());
-  }, [dispatch]);
+    
+    // Check for success message from registration
+    if (location.state?.message) {
+      setSuccessMessage(location.state.message);
+      setShowSuccessSnackbar(true);
+      
+      // Clear the message from location state
+      navigate(location.pathname, { replace: true });
+    }
+  }, [dispatch, location, navigate]);
 
   const onSubmit = async (data: LoginForm) => {
     dispatch(loginUser(data));
+  };
+
+  const handleSuccessSnackbarClose = () => {
+    setShowSuccessSnackbar(false);
+    setSuccessMessage(null);
   };
 
   return (
@@ -78,6 +95,12 @@ const Login: React.FC = () => {
         <Typography component="h2" variant="h5" align="center" gutterBottom>
           Sign In
         </Typography>
+
+        {successMessage && (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            {successMessage}
+          </Alert>
+        )}
 
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
@@ -121,6 +144,17 @@ const Login: React.FC = () => {
           </Button>
         </Box>
       </Paper>
+
+      <Snackbar
+        open={showSuccessSnackbar}
+        autoHideDuration={6000}
+        onClose={handleSuccessSnackbarClose}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={handleSuccessSnackbarClose} severity="success" sx={{ width: '100%' }}>
+          {successMessage}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

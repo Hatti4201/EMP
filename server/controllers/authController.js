@@ -51,7 +51,7 @@ exports.loginUser = async (req, res) => {
     if (!match) return res.status(401).json({ message: "Invalid password" });
 
     const token = generateToken(user);
-    res.json({ token, user: { id: user._id, username: user.username, role: user.role } });
+    res.json({ token, user: { id: user._id, username: user.username, email: user.email, role: user.role } });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
@@ -60,7 +60,32 @@ exports.loginUser = async (req, res) => {
 exports.getCurrentUser = async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
-    res.json({ user });
+    
+    // For employees, also fetch onboarding status
+    let onboardingStatus = 'never-submitted';
+    if (user.role === 'employee') {
+      const OnboardingApplication = require("../models/OnboardingApplication");
+      
+      // Check and update onboarding status proactively
+      try {
+        const hrController = require("./hrController");
+        await hrController.checkAndUpdateOnboardingStatus(user._id);
+      } catch (error) {
+        console.log('⚠️ Could not check onboarding status:', error.message);
+      }
+      
+      const application = await OnboardingApplication.findOne({ user: user._id });
+      if (application) {
+        onboardingStatus = application.status;
+      }
+    }
+    
+    const userResponse = {
+      ...user.toObject(),
+      onboardingStatus: user.role === 'employee' ? onboardingStatus : undefined
+    };
+    
+    res.json({ user: userResponse });
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }

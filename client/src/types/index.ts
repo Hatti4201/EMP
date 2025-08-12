@@ -14,6 +14,7 @@ export interface AuthState {
   isAuthenticated: boolean;
   loading: boolean;
   error: string | null;
+  registrationSuccess: boolean;
 }
 
 // Employee Profile Types
@@ -35,6 +36,7 @@ export interface Employee {
   reference?: Reference;
   emergencyContacts: EmergencyContact[];
   documents: Document[];
+  visaDocuments?: VisaDocument[];
   onboardingStatus: 'never-submitted' | 'pending' | 'approved' | 'rejected';
   createdAt: string;
   updatedAt: string;
@@ -91,6 +93,16 @@ export interface Document {
   feedback?: string;
 }
 
+export interface VisaDocument {
+  type: 'OPT Receipt' | 'OPT EAD' | 'I-983' | 'I-20';
+  status: 'pending' | 'approved' | 'rejected';
+  feedback?: string;
+  uploadedAt?: Date | string;
+  file?: string;
+  name?: string;
+  url?: string | null;
+}
+
 // Onboarding Application Types
 export interface OnboardingApplication {
   _id: string;
@@ -104,17 +116,26 @@ export interface OnboardingApplication {
 
 // Visa Status Management Types
 export interface VisaStatus {
-  _id: string;
-  employeeId: string;
-  currentStep: 'opt-receipt' | 'opt-ead' | 'i983' | 'i20' | 'completed';
-  documents: {
+  _id?: string;
+  employeeId?: string;
+  currentStep?: 'opt-receipt' | 'opt-ead' | 'i983' | 'i20' | 'completed';
+  documents?: {
     optReceipt?: Document;
     optEad?: Document;
     i983?: Document;
     i20?: Document;
   };
+  steps?: VisaStep[];
   nextStepDue?: string;
-  updatedAt: string;
+  updatedAt?: string;
+}
+
+export interface VisaStep {
+  type: 'OPT Receipt' | 'OPT EAD' | 'I-983' | 'I-20';
+  status: 'pending' | 'approved' | 'rejected';
+  feedback?: string;
+  uploadedAt?: Date | string;
+  file?: string;
 }
 
 // HR Management Types
@@ -126,6 +147,8 @@ export interface RegistrationToken {
   expiresAt: string;
   used: boolean;
   createdAt: string;
+  onboardingStatus?: 'not_registered' | 'registered' | 'pending' | 'approved' | 'rejected';
+  registrationLink?: string;
 }
 
 export interface HRDashboardStats {
@@ -155,7 +178,7 @@ export interface OnboardingForm {
   lastName: string;
   middleName?: string;
   preferredName?: string;
-  profilePicture?: File;
+  profilePicture?: File | string;
   address: Address;
   phoneNumbers: PhoneNumbers;
   ssn: string;
@@ -165,9 +188,9 @@ export interface OnboardingForm {
   reference?: Reference;
   emergencyContacts: EmergencyContact[];
   documents: {
-    driversLicense?: File;
-    workAuthorization?: File;
-    optReceipt?: File;
+    driversLicense?: File | string;
+    workAuthorization?: File | string;
+    optReceipt?: File | string;
   };
 }
 

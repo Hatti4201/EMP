@@ -7,15 +7,18 @@ import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import { store } from './store';
 import { useAppDispatch, useAppSelector } from './store';
 import { verifyToken } from './store/slices/authSlice';
+import { fetchEmployeeProfile } from './store/slices/employeeSlice';
 
 // Import pages
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
+import EmployeeHome from './pages/employee/Home';
 import EmployeeOnboarding from './pages/employee/Onboarding';
 import EmployeePersonalInfo from './pages/employee/PersonalInformation';
 import EmployeeVisaStatus from './pages/employee/VisaStatus';
 import HRHome from './pages/hr/Home';
 import HREmployeeProfiles from './pages/hr/EmployeeProfiles';
+import HREmployeeDetail from './pages/hr/EmployeeDetail';
 import HRVisaManagement from './pages/hr/VisaManagement';
 import HRHiringManagement from './pages/hr/HiringManagement';
 import TestPage from './pages/test/TestPage';
@@ -60,6 +63,8 @@ const theme = createTheme({
   },
 });
 
+
+
 function AppContent() {
   const dispatch = useAppDispatch();
   const { isAuthenticated, loading, user } = useAppSelector((state) => state.auth);
@@ -77,60 +82,52 @@ function AppContent() {
   }
 
   return (
-    <Provider store={store}>
-      <ThemeProvider theme={theme}>
-        <LocalizationProvider dateAdapter={AdapterDayjs}>
-          <Box sx={{ width: '100%', minHeight: '100vh', margin: 0, padding: 0 }}>
-            <Router>
-              <Routes>
-                {/* Public routes */}
-                <Route path="/login" element={<Login />} />
-                <Route path="/register" element={<Register />} />
-                <Route path="/test" element={<TestPage />} />
+    <Box sx={{ width: '100%', minHeight: '100vh', margin: 0, padding: 0 }}>
+      <Router>
+        <Routes>
+          {/* Public routes */}
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/test" element={<TestPage />} />
 
-                {/* Protected routes - redirect to login if not authenticated */}
-                {(isAuthenticated || import.meta.env.DEV) ? (
-                  <Route path="/" element={<Layout />}>
-                    <Route index element={<Navigate to="/employee/onboarding" replace />} />
-                    
-                    {/* Employee routes */}
-                    {(user?.role === 'employee' || import.meta.env.DEV) && (
-                      <>
-                        <Route path="/employee/onboarding" element={<EmployeeOnboarding />} />
-                        <Route path="/employee/personal-information" element={<EmployeePersonalInfo />} />
-                        <Route path="/employee/visa-status" element={<EmployeeVisaStatus />} />
-                      </>
-                    )}
+          {/* Protected routes - redirect to login if not authenticated */}
+          {isAuthenticated ? (
+            <Route path="/" element={<Layout />}>
+              <Route index element={<Navigate to={user?.role === 'hr' ? "/hr/home" : "/employee/home"} replace />} />
+              
+              {/* Employee routes */}
+              {user?.role === 'employee' && (
+                <>
+                  <Route path="/employee/home" element={<EmployeeHome />} />
+                  <Route path="/employee/onboarding" element={<EmployeeOnboarding />} />
+                  <Route path="/employee/personal-information" element={<EmployeePersonalInfo />} />
+                  <Route path="/employee/visa-status" element={<EmployeeVisaStatus />} />
+                </>
+              )}
 
-                    {/* HR routes */}
-                    {(user?.role === 'hr' || import.meta.env.DEV) && (
-                      <>
-                        <Route path="/hr/home" element={<HRHome />} />
-                        <Route path="/hr/employee-profiles" element={<HREmployeeProfiles />} />
-                        <Route path="/hr/visa-management" element={<HRVisaManagement />} />
-                        <Route path="/hr/hiring-management" element={<HRHiringManagement />} />
-                      </>
-                    )}
-                  </Route>
-                ) : (
-                  <Route path="*" element={<Navigate to="/login" replace />} />
-                )}
+              {/* HR routes */}
+              {user?.role === 'hr' && (
+                <>
+                  <Route path="/hr/home" element={<HRHome />} />
+                  <Route path="/hr/employee-profiles" element={<HREmployeeProfiles />} />
+                  <Route path="/hr/employee-profiles/:employeeId" element={<HREmployeeDetail />} />
+                  <Route path="/hr/visa-management" element={<HRVisaManagement />} />
+                  <Route path="/hr/hiring-management" element={<HRHiringManagement />} />
+                </>
+              )}
+            </Route>
+          ) : (
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          )}
 
-                {/* Catch-all route */}
-                <Route 
-                  path="*" 
-                  element={
-                    import.meta.env.DEV 
-                      ? <Navigate to="/employee/onboarding" replace />
-                      : <Navigate to="/login" replace />
-                  } 
-                />
-              </Routes>
-            </Router>
-          </Box>
-        </LocalizationProvider>
-      </ThemeProvider>
-    </Provider>
+          {/* Catch-all route */}
+          <Route 
+            path="*" 
+            element={<Navigate to="/login" replace />} 
+          />
+        </Routes>
+      </Router>
+    </Box>
   );
 }
 

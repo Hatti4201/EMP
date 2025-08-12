@@ -7,8 +7,12 @@ export const fetchEmployeeProfile = createAsyncThunk(
   'employee/fetchProfile',
   async (_, { rejectWithValue }) => {
     try {
-      const response = await api.user.getProfile();
-      return response.data;
+      // Use auth.me() instead of user.getProfile() since /user/profile doesn't exist
+      const response = await api.auth.me();
+      console.log('🔍 API response from auth.me():', response.data);
+      console.log('🔍 User data:', response.data.user);
+      console.log('🔍 Onboarding status from API:', response.data.user?.onboardingStatus);
+      return response.data.user;
     } catch (error: any) {
       const message = error.response?.data?.message || 'Failed to fetch profile';
       return rejectWithValue(message);
@@ -85,13 +89,18 @@ export const uploadVisaDocument = createAsyncThunk(
   'employee/uploadVisaDocument',
   async ({ file, type }: { file: File; type: string }, { rejectWithValue }) => {
     try {
+      console.log('🔧 Redux uploadVisaDocument: Creating FormData...', { fileName: file.name, type });
       const formData = new FormData();
       formData.append('file', file);
       formData.append('type', type);
       
+      console.log('🔧 Redux uploadVisaDocument: Calling API...');
       const response = await api.visa.uploadDocument(formData);
+      console.log('🔧 Redux uploadVisaDocument: API response:', response);
       return response.data;
     } catch (error: any) {
+      console.error('🔧 Redux uploadVisaDocument error:', error);
+      console.error('🔧 Error response:', error.response);
       const message = error.response?.data?.message || 'Failed to upload document';
       return rejectWithValue(message);
     }

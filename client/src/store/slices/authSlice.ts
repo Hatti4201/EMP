@@ -62,6 +62,7 @@ const initialState: AuthState = {
   isAuthenticated: false,
   loading: false,
   error: null,
+  registrationSuccess: false,
 };
 
 const authSlice = createSlice({
@@ -74,9 +75,13 @@ const authSlice = createSlice({
       state.token = null;
       state.isAuthenticated = false;
       state.error = null;
+      state.registrationSuccess = false;
     },
     clearError: (state) => {
       state.error = null;
+    },
+    clearRegistrationSuccess: (state) => {
+      state.registrationSuccess = false;
     },
   },
   extraReducers: (builder) => {
@@ -101,16 +106,25 @@ const authSlice = createSlice({
       
       // Register user
       .addCase(registerUser.pending, (state) => {
+        console.log('🔄 Registration pending...');
         state.loading = true;
         state.error = null;
+        state.registrationSuccess = false;
       })
-      .addCase(registerUser.fulfilled, (state) => {
+      .addCase(registerUser.fulfilled, (state, action) => {
+        console.log('✅ Registration fulfilled with payload:', action.payload);
         state.loading = false;
         state.error = null;
+        state.registrationSuccess = true;
+        // Important: Do NOT set isAuthenticated to true here 
+        // User needs to login separately after registration
+        console.log('🎯 Registration success state set to:', state.registrationSuccess);
       })
       .addCase(registerUser.rejected, (state, action) => {
+        console.log('❌ Registration rejected with error:', action.payload);
         state.loading = false;
         state.error = action.payload as string;
+        state.registrationSuccess = false;
       })
       
       // Verify token
@@ -132,5 +146,5 @@ const authSlice = createSlice({
   },
 });
 
-export const { logout, clearError } = authSlice.actions;
+export const { logout, clearError, clearRegistrationSuccess } = authSlice.actions;
 export default authSlice.reducer; 

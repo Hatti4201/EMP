@@ -1,0 +1,16 @@
+# env
+.env
+*.env
+client/.env
+server/.env
+server/.env.*
+
+# uploads / build output
+server/uploads/
+client/dist/
+server/node_modules/
+client/node_modules/
+
+# OS / editor junk
+.DS_Store
+*.log

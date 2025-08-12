@@ -15,7 +15,7 @@ import {
 } from '@mui/material';
 import { Edit, Save, Cancel } from '@mui/icons-material';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { fetchEmployeeProfile, updateEmployeeProfile } from '../../store/slices/employeeSlice';
+import { fetchEmployeeProfile, updateEmployeeProfile, downloadFile, fetchOnboardingApplication, updateOnboardingApplication, fetchVisaStatus } from '../../store/slices/employeeSlice';
 
 // Import reusable components
 import FormField from '../../components/forms/FormField';
@@ -30,6 +30,7 @@ const schema = yup.object({
   lastName: yup.string().required('Last name is required'),
   middleName: yup.string(),
   preferredName: yup.string(),
+  profilePicture: yup.mixed(),
   email: yup.string().email('Invalid email').required('Email is required'),
   ssn: yup.string().required('SSN is required'),
   dateOfBirth: yup.string().required('Date of birth is required'),
@@ -63,6 +64,7 @@ const schema = yup.object({
 });
 
 interface EditingSections {
+  profilePicture: boolean;
   name: boolean;
   address: boolean;
   contact: boolean;
@@ -72,8 +74,35 @@ interface EditingSections {
 
 const PersonalInformation: React.FC = () => {
   const dispatch = useAppDispatch();
-  const { profile, loading, error } = useAppSelector((state) => state.employee);
+  const { profile, onboardingApplication, visaStatus, loading, error } = useAppSelector((state) => state.employee);
+  const { user } = useAppSelector((state) => state.auth);
+
+  // Helper function to find profile picture from various possible locations
+  const findProfilePicture = (applicationData: any, personalInfo: any): string => {
+    // First check the current expected location
+    if (personalInfo?.profilePicture) {
+      console.log('✅ Found profile picture in personalInfo.profilePicture');
+      return personalInfo.profilePicture;
+    } 
+    // Check if it's stored at application level
+    else if (applicationData?.profilePicture) {
+      console.log('✅ Found profile picture in applicationData.profilePicture');
+      return applicationData.profilePicture;
+    }
+    // Check if it's stored in documents array (legacy format)
+    else if (applicationData?.documents && Array.isArray(applicationData.documents)) {
+      const profileDoc = applicationData.documents.find((doc: string) => 
+        doc && (doc.includes('profile') || doc.includes('picture'))
+      );
+      if (profileDoc) {
+        console.log('✅ Found profile picture in documents array:', profileDoc);
+        return profileDoc;
+      }
+    }
+    return '';
+  };
   const [editingSections, setEditingSections] = useState<EditingSections>({
+    profilePicture: false,
     name: false,
     address: false,
     contact: false,
@@ -90,6 +119,7 @@ const PersonalInformation: React.FC = () => {
       lastName: '',
       middleName: '',
       preferredName: '',
+      profilePicture: '',
       email: '',
       ssn: '',
       dateOfBirth: '',
@@ -115,21 +145,78 @@ const PersonalInformation: React.FC = () => {
     mode: 'onChange',
   });
 
-  const { handleSubmit, reset, setValue, getValues } = methods;
+  const { handleSubmit, reset, setValue, getValues, watch } = methods;
+  const watchedEmergencyContacts = watch('emergencyContacts') || [];
 
   useEffect(() => {
     dispatch(fetchEmployeeProfile());
+    dispatch(fetchOnboardingApplication());
+    dispatch(fetchVisaStatus());
   }, [dispatch]);
 
   useEffect(() => {
-    if (profile) {
-      // Populate form with profile data
+    console.log('🔍 PersonalInformation useEffect triggered');
+    console.log('📊 onboardingApplication:', onboardingApplication);
+    console.log('📊 profile:', profile);
+    console.log('📊 user:', user);
+    console.log('📧 user.email:', user?.email);
+    console.log('📧 user.username:', user?.username);
+    
+    // Use onboarding application data as the primary source
+    if ((onboardingApplication as any)?.application?.personalInfo) {
+      console.log('✅ Using onboarding application data');
+      const personalInfo = (onboardingApplication as any).application.personalInfo;
+      const applicationData = (onboardingApplication as any).application;
+      console.log('📝 personalInfo:', personalInfo);
+      console.log('📝 applicationData full structure:', applicationData);
+      
+      // Check for profile picture in different possible locations
+      console.log('🖼️ personalInfo.profilePicture:', personalInfo.profilePicture);
+      console.log('🖼️ applicationData.profilePicture:', applicationData.profilePicture);
+      console.log('🖼️ applicationData.documents:', applicationData.documents);
+      
+      const profilePictureUrl = findProfilePicture(applicationData, personalInfo);
+      console.log('🖼️ Final profilePictureUrl:', profilePictureUrl);
+      
+      // Transform backend data format to frontend format
+      reset({
+        firstName: personalInfo.name?.firstName || '',
+        lastName: personalInfo.name?.lastName || '',
+        middleName: personalInfo.name?.middleName || '',
+        preferredName: personalInfo.name?.preferredName || '',
+        profilePicture: profilePictureUrl,
+        email: user?.email || '',
+        ssn: personalInfo.ssn || '',
+        dateOfBirth: personalInfo.dob ? personalInfo.dob.split('T')[0] : '',
+        gender: personalInfo.gender || 'no-answer',
+        address: personalInfo.address || {
+          building: '',
+          street: '',
+          city: '',
+          state: '',
+          zip: '',
+        },
+        phoneNumbers: {
+          cell: personalInfo.contact?.phone || '',
+          work: personalInfo.contact?.workPhone || '',
+        },
+        workAuthorization: {
+          visaTitle: personalInfo.visa?.visaTitle || '',
+          startDate: personalInfo.visa?.startDate ? personalInfo.visa.startDate.split('T')[0] : '',
+          endDate: personalInfo.visa?.endDate ? personalInfo.visa.endDate.split('T')[0] : '',
+        },
+        emergencyContacts: personalInfo.emergencyContacts || [],
+      });
+    } else if (profile) {
+      console.log('⚠️ Using profile fallback data');
+      // Fallback to profile data if available
       reset({
         firstName: profile.firstName || '',
         lastName: profile.lastName || '',
         middleName: profile.middleName || '',
         preferredName: profile.preferredName || '',
-        email: profile.email || '',
+        profilePicture: profile.profilePicture || '',
+        email: profile.email || user?.email || '',
         ssn: profile.ssn || '',
         dateOfBirth: profile.dateOfBirth || '',
         gender: profile.gender || 'no-answer',
@@ -151,8 +238,10 @@ const PersonalInformation: React.FC = () => {
         },
         emergencyContacts: profile.emergencyContacts || [],
       });
+    } else {
+      console.log('❌ No data found to populate form');
     }
-  }, [profile, reset]);
+  }, [onboardingApplication, profile, user, reset]);
 
   const handleEdit = (section: keyof EditingSections) => {
     setEditingSections(prev => ({ ...prev, [section]: true }));
@@ -162,11 +251,43 @@ const PersonalInformation: React.FC = () => {
     const isValid = await methods.trigger();
     if (isValid) {
       const formData = getValues();
+      console.log('💾 Saving form data:', formData);
+      console.log('💾 ProfilePicture in form data:', formData.profilePicture);
+      
       try {
-        await dispatch(updateEmployeeProfile(formData)).unwrap();
+        // Add documents field to match OnboardingForm interface
+        const updateData = {
+          ...formData,
+          gender: formData.gender as 'male' | 'female' | 'no-answer',
+          documents: {
+            driversLicense: undefined,
+            workAuthorization: undefined,
+            optReceipt: undefined,
+          }
+        };
+        
+        console.log('💾 Sending update data:', updateData);
+        console.log('💾 ProfilePicture in update data:', updateData.profilePicture);
+        
+        // Use updateOnboardingApplication instead of updateEmployeeProfile
+        const result = await dispatch(updateOnboardingApplication(updateData as any)).unwrap();
+        console.log('✅ Update result:', result);
+        
+        // Force refresh of onboarding application data
+        await dispatch(fetchOnboardingApplication()).unwrap();
+        
+        // Manually update form with the latest profilePicture if it was updated
+        if (section === 'profilePicture' && result && result.application) {
+          const newProfilePicture = result.application.personalInfo?.profilePicture;
+          if (newProfilePicture) {
+            console.log('🔄 Manually updating form with new profile picture:', newProfilePicture);
+            setValue('profilePicture', newProfilePicture);
+          }
+        }
+        
         setEditingSections(prev => ({ ...prev, [section]: false }));
       } catch (error) {
-        console.error('Failed to update profile:', error);
+        console.error('❌ Failed to update profile:', error);
       }
     }
   };
@@ -176,36 +297,82 @@ const PersonalInformation: React.FC = () => {
     setShowCancelDialog(true);
   };
 
+  const handleDownloadDocument = (document: any) => {
+    if (document.url) {
+      // Extract filename from URL
+      const filename = document.url.split('/').pop() || document.name;
+      dispatch(downloadFile(filename));
+    }
+  };
+
   const confirmCancel = () => {
-    if (cancelingSection && profile) {
-      // Reset form to original values
-      reset({
-        firstName: profile.firstName || '',
-        lastName: profile.lastName || '',
-        middleName: profile.middleName || '',
-        preferredName: profile.preferredName || '',
-        email: profile.email || '',
-        ssn: profile.ssn || '',
-        dateOfBirth: profile.dateOfBirth || '',
-        gender: profile.gender || 'no-answer',
-        address: profile.address || {
-          building: '',
-          street: '',
-          city: '',
-          state: '',
-          zip: '',
-        },
-        phoneNumbers: profile.phoneNumbers || {
-          cell: '',
-          work: '',
-        },
-        workAuthorization: {
-          visaTitle: profile.workAuthorization?.visaTitle || '',
-          startDate: profile.workAuthorization?.startDate || '',
-          endDate: profile.workAuthorization?.endDate || '',
-        },
-        emergencyContacts: profile.emergencyContacts || [],
-      });
+    if (cancelingSection) {
+      // Reset form to original values using the same logic as in useEffect
+      if ((onboardingApplication as any)?.application?.personalInfo) {
+        const personalInfo = (onboardingApplication as any).application.personalInfo;
+        const applicationData = (onboardingApplication as any).application;
+        const profilePictureUrl = findProfilePicture(applicationData, personalInfo);
+        
+        // Reset form with original onboarding data
+        reset({
+          firstName: personalInfo.name?.firstName || '',
+          lastName: personalInfo.name?.lastName || '',
+          middleName: personalInfo.name?.middleName || '',
+          preferredName: personalInfo.name?.preferredName || '',
+          profilePicture: profilePictureUrl,
+          email: user?.email || '',
+          ssn: personalInfo.ssn || '',
+          dateOfBirth: personalInfo.dob ? personalInfo.dob.split('T')[0] : '',
+          gender: personalInfo.gender || 'no-answer',
+          address: personalInfo.address || {
+            building: '',
+            street: '',
+            city: '',
+            state: '',
+            zip: '',
+          },
+          phoneNumbers: {
+            cell: personalInfo.contact?.phone || '',
+            work: personalInfo.contact?.workPhone || '',
+          },
+          workAuthorization: {
+            visaTitle: personalInfo.visa?.visaTitle || '',
+            startDate: personalInfo.visa?.startDate ? personalInfo.visa.startDate.split('T')[0] : '',
+            endDate: personalInfo.visa?.endDate ? personalInfo.visa.endDate.split('T')[0] : '',
+          },
+          emergencyContacts: personalInfo.emergencyContacts || [],
+        });
+      } else if (profile) {
+        // Fallback to profile data if available
+        reset({
+          firstName: profile.firstName || '',
+          lastName: profile.lastName || '',
+          middleName: profile.middleName || '',
+          preferredName: profile.preferredName || '',
+          profilePicture: profile.profilePicture || '',
+          email: profile.email || user?.email || '',
+          ssn: profile.ssn || '',
+          dateOfBirth: profile.dateOfBirth || '',
+          gender: profile.gender || 'no-answer',
+          address: profile.address || {
+            building: '',
+            street: '',
+            city: '',
+            state: '',
+            zip: '',
+          },
+          phoneNumbers: profile.phoneNumbers || {
+            cell: '',
+            work: '',
+          },
+          workAuthorization: {
+            visaTitle: profile.workAuthorization?.visaTitle || '',
+            startDate: profile.workAuthorization?.startDate || '',
+            endDate: profile.workAuthorization?.endDate || '',
+          },
+          emergencyContacts: profile.emergencyContacts || [],
+        });
+      }
       setEditingSections(prev => ({ ...prev, [cancelingSection]: false }));
     }
     setShowCancelDialog(false);
@@ -258,6 +425,121 @@ const PersonalInformation: React.FC = () => {
       )}
 
       <FormProvider {...methods}>
+        {/* Profile Picture Section */}
+        <Paper sx={{ p: 3, mb: 3 }}>
+          <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+            <Typography variant="h6">Profile Picture</Typography>
+            {!editingSections.profilePicture ? (
+              <Button startIcon={<Edit />} onClick={() => handleEdit('profilePicture')}>
+                Edit
+              </Button>
+            ) : (
+              <Box>
+                <Button
+                  startIcon={<Cancel />}
+                  onClick={() => handleCancel('profilePicture')}
+                  sx={{ mr: 1 }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  startIcon={<Save />}
+                  variant="contained"
+                  onClick={() => handleSave('profilePicture')}
+                >
+                  Save
+                </Button>
+              </Box>
+            )}
+          </Box>
+
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            {/* Current Profile Picture Display */}
+            <Box sx={{ 
+              width: 120, 
+              height: 120, 
+              borderRadius: '50%', 
+              border: '2px solid #ddd',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'hidden',
+              backgroundColor: '#f5f5f5'
+            }}>
+              {(() => {
+                const profilePictureUrl = watch('profilePicture');
+                console.log('🖼️ Current profile picture URL:', profilePictureUrl);
+                
+                                 if (profilePictureUrl && typeof profilePictureUrl === 'string' && profilePictureUrl.trim()) {
+                   // Ensure URL is absolute for server files
+                   let imageUrl = profilePictureUrl;
+                   if (!imageUrl.startsWith('http') && !imageUrl.startsWith('data:')) {
+                     // If it's a relative path, make it absolute
+                     const serverUrl = 'http://localhost:8000';
+                     if (imageUrl.startsWith('/files/')) {
+                       // Handle /files/filename.jpg format
+                       const filename = imageUrl.split('/').pop();
+                       imageUrl = `${serverUrl}/api/files/${filename}`;
+                     } else if (imageUrl.startsWith('/')) {
+                       // Handle other absolute paths
+                       imageUrl = `${serverUrl}/api${imageUrl}`;
+                     } else if (imageUrl.startsWith('uploads/')) {
+                       // Handle uploads/filename.jpg format
+                       imageUrl = `${serverUrl}/api/files/${imageUrl.split('/').pop()}`;
+                     } else {
+                       // Assume it's just a filename
+                       imageUrl = `${serverUrl}/api/files/${imageUrl}`;
+                     }
+                   }
+                  
+                  console.log('🖼️ Final image URL:', imageUrl);
+                  
+                  return (
+                    <img 
+                      src={imageUrl} 
+                      alt="Profile" 
+                      style={{ 
+                        width: '100%', 
+                        height: '100%', 
+                        objectFit: 'cover' 
+                      }}
+                      onError={(e) => {
+                        console.error('❌ Error loading profile picture from URL:', imageUrl);
+                        console.error('❌ Original URL was:', profilePictureUrl);
+                        // Hide the broken image and show placeholder
+                        e.currentTarget.style.display = 'none';
+                      }}
+                      onLoad={() => {
+                        console.log('✅ Successfully loaded profile picture from:', imageUrl);
+                      }}
+                    />
+                  );
+                } else {
+                  return (
+                    <Typography variant="body2" color="textSecondary" textAlign="center">
+                      No profile picture uploaded
+                    </Typography>
+                  );
+                }
+              })()}
+            </Box>
+
+            {/* File Upload Component */}
+            <Box sx={{ flex: 1 }}>
+              {editingSections.profilePicture && (
+                <FileUpload
+                  name="profilePicture"
+                  label="Upload Profile Picture"
+                  accept="image/*"
+                  rules={{
+                    required: false
+                  }}
+                />
+              )}
+            </Box>
+          </Box>
+        </Paper>
+
         {/* Name Section */}
         <Paper sx={{ p: 3, mb: 3 }}>
           <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
@@ -558,13 +840,22 @@ const PersonalInformation: React.FC = () => {
             </Button>
           )}
 
-          {profile.emergencyContacts?.map((contact, index) => (
+          {/* Debug info for emergency contacts */}
+          {console.log('🔍 watchedEmergencyContacts:', watchedEmergencyContacts)}
+          
+          {watchedEmergencyContacts.length === 0 ? (
+            <Typography variant="body2" color="textSecondary" sx={{ textAlign: 'center', py: 3 }}>
+              No emergency contacts added yet.
+              {editingSections.emergencyContact && ' Click "Add Emergency Contact" to add one.'}
+            </Typography>
+          ) : (
+            watchedEmergencyContacts.map((contact: any, index: number) => (
             <Paper key={index} sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>
               <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
                 <Typography variant="subtitle1">
                   Emergency Contact {index + 1}
                 </Typography>
-                {editingSections.emergencyContact && profile.emergencyContacts!.length > 1 && (
+                {editingSections.emergencyContact && watchedEmergencyContacts.length > 1 && (
                   <Button
                     color="error"
                     onClick={() => removeEmergencyContact(index)}
@@ -619,7 +910,8 @@ const PersonalInformation: React.FC = () => {
                 </Grid>
               </Grid>
             </Paper>
-          ))}
+          ))
+          )}
         </Paper>
       </FormProvider>
 
@@ -628,17 +920,140 @@ const PersonalInformation: React.FC = () => {
         <Typography variant="h6" gutterBottom>
           Documents
         </Typography>
-        {profile.documents && profile.documents.length > 0 ? (
-          <DocumentList
-            documents={profile.documents}
-            showStatus={true}
-            emptyMessage="No documents uploaded yet."
-          />
-        ) : (
-          <Typography variant="body2" color="textSecondary">
-            No documents uploaded yet.
-          </Typography>
-        )}
+        {(() => {
+          console.log('🔍 Collecting documents from all sources...');
+          
+          // 1. Documents from onboarding application
+          const appDocs = (onboardingApplication as any)?.application?.documents || [];
+          console.log('📁 Onboarding application documents:', appDocs);
+          
+          // 2. Documents from profile
+          const profileDocs = profile?.documents || [];
+          console.log('📁 Profile documents:', profileDocs);
+          
+          // 3. Documents from visa status (visa uploads)
+          const visaDocs = visaStatus?.steps || [];
+          console.log('📁 Visa status documents:', visaDocs);
+          
+          // Transform onboarding application documents
+          const transformedAppDocs = appDocs
+            .filter((docPath: string) => docPath && typeof docPath === 'string' && docPath.trim() !== '')
+            .map((docPath: string, index: number) => {
+              const filename = docPath.split('/').pop() || `Document ${index + 1}`;
+              const fileExtension = filename.split('.').pop()?.toLowerCase();
+              
+              // Determine document type based on filename
+              let docType: 'profile-picture' | 'drivers-license' | 'work-authorization' | 'opt-receipt' | 'opt-ead' | 'i983' | 'i20' = 'work-authorization';
+              if (filename.toLowerCase().includes('license') || filename.toLowerCase().includes('driver')) {
+                docType = 'drivers-license';
+              } else if (filename.toLowerCase().includes('opt')) {
+                docType = 'opt-receipt';
+              } else if (filename.toLowerCase().includes('i983')) {
+                docType = 'i983';
+              } else if (filename.toLowerCase().includes('i20')) {
+                docType = 'i20';
+              }
+              
+              // Determine MIME type
+              let mimeType = 'application/octet-stream';
+              if (fileExtension === 'pdf') {
+                mimeType = 'application/pdf';
+              } else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(fileExtension || '')) {
+                mimeType = `image/${fileExtension}`;
+              }
+              
+              return {
+                _id: `app-doc-${index}`,
+                name: filename,
+                type: docType,
+                mimeType: mimeType,
+                url: docPath,
+                uploadDate: new Date().toISOString(),
+                status: 'approved' as const,
+                source: 'onboarding'
+              };
+            });
+          
+          // Transform visa status documents
+          const transformedVisaDocs = visaDocs
+            .filter(step => step.file && step.file.trim() !== '')
+            .map((step, index) => {
+              const filename = step.file ? step.file.split('/').pop() || step.type : step.type;
+              const fileExtension = filename.split('.').pop()?.toLowerCase();
+              
+              // Determine document type based on step type
+              let docType: 'profile-picture' | 'drivers-license' | 'work-authorization' | 'opt-receipt' | 'opt-ead' | 'i983' | 'i20' = 'work-authorization';
+              if (step.type === 'OPT Receipt') {
+                docType = 'opt-receipt';
+              } else if (step.type === 'OPT EAD') {
+                docType = 'opt-ead';
+              } else if (step.type === 'I-983') {
+                docType = 'i983';
+              } else if (step.type === 'I-20') {
+                docType = 'i20';
+              }
+              
+              // Determine MIME type
+              let mimeType = 'application/octet-stream';
+              if (fileExtension === 'pdf') {
+                mimeType = 'application/pdf';
+              } else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(fileExtension || '')) {
+                mimeType = `image/${fileExtension}`;
+              }
+              
+              return {
+                _id: `visa-doc-${index}`,
+                name: filename,
+                type: docType,
+                mimeType: mimeType,
+                url: step.file,
+                uploadDate: step.uploadedAt || new Date().toISOString(),
+                status: step.status as 'pending' | 'approved' | 'rejected',
+                feedback: step.feedback,
+                source: 'visa'
+              };
+            });
+          
+          console.log('📄 Transformed onboarding documents:', transformedAppDocs);
+          console.log('📄 Transformed visa documents:', transformedVisaDocs);
+          
+          // Combine all documents from different sources
+          const allDocuments = [
+            ...transformedAppDocs,
+            ...transformedVisaDocs,
+            ...profileDocs.filter((doc: any) => doc && typeof doc === 'object')
+          ];
+          
+          // Remove duplicates based on filename (keep the most recent)
+          const uniqueDocuments = allDocuments.reduce((acc: any[], doc: any) => {
+            const existingIndex = acc.findIndex(existing => existing.name === doc.name);
+            if (existingIndex >= 0) {
+              // Keep the document with the most recent upload date or visa source priority
+              const existing = acc[existingIndex];
+              if (doc.source === 'visa' || new Date(doc.uploadDate) > new Date(existing.uploadDate)) {
+                acc[existingIndex] = doc;
+              }
+            } else {
+              acc.push(doc);
+            }
+            return acc;
+          }, []);
+          
+          console.log('📄 Final unique documents:', uniqueDocuments);
+          
+          return uniqueDocuments && uniqueDocuments.length > 0 ? (
+            <DocumentList
+              documents={uniqueDocuments}
+              onDownload={handleDownloadDocument}
+              showStatus={true}
+              emptyMessage="No documents uploaded yet."
+            />
+          ) : (
+            <Typography variant="body2" color="textSecondary">
+              No documents uploaded yet.
+            </Typography>
+          );
+        })()}
       </Paper>
 
       {/* Confirmation Dialog */}

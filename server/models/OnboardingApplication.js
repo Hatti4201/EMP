@@ -10,6 +10,7 @@ const OnboardingSchema = new mongoose.Schema({
       middleName: String,
       preferredName: String,
     },
+    profilePicture: String, // URL to uploaded profile picture
     address: {
       building: String,
       street: String,

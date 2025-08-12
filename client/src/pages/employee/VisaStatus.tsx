@@ -23,7 +23,7 @@ import {
   Visibility,
 } from '@mui/icons-material';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { fetchVisaStatus, uploadVisaDocument } from '../../store/slices/employeeSlice';
+import { fetchVisaStatus, uploadVisaDocument, fetchOnboardingApplication } from '../../store/slices/employeeSlice';
 
 // Import reusable components
 import FileUpload from '../../components/forms/FileUpload';
@@ -33,17 +33,71 @@ import type { Document } from '../../types';
 
 const VisaStatus: React.FC = () => {
   const dispatch = useAppDispatch();
-  const { profile, visaStatus, loading, error } = useAppSelector((state) => state.employee);
+  const { profile, onboardingApplication, visaStatus, loading, error } = useAppSelector((state) => state.employee);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [uploadingDocument, setUploadingDocument] = useState<string | null>(null);
 
   useEffect(() => {
     dispatch(fetchVisaStatus());
+    dispatch(fetchOnboardingApplication());
   }, [dispatch]);
 
+  // Wait for essential data to load before making visa type determination
+  const isDataLoaded = onboardingApplication !== null || profile !== null;
+
+  // Get OPT Receipt from onboarding application
+  const getOPTReceiptFromOnboarding = () => {
+    // Check if user has submitted OPT Receipt in onboarding application
+    return isOPTVisa ? {
+      name: 'OPT Receipt (from onboarding)',
+      status: 'pending', // Default to pending until HR reviews
+      uploadDate: new Date().toISOString(),
+      url: '', // Will be populated from actual onboarding data
+      type: 'opt-receipt'
+    } : null;
+  };
+
+  // Check for OPT visa in multiple possible locations
+  const getVisaType = () => {
+    // First check onboarding application (stored in personalInfo.visa.visaTitle)
+    const onboardingVisa = (onboardingApplication as any)?.application?.personalInfo?.visa?.visaTitle;
+    
+    // Then check profile
+    const profileVisa = profile?.workAuthorization?.visaType ||
+                       profile?.workAuthorization?.visaTitle;
+    
+    console.log('🔍 Visa Status Debug Info:');
+    console.log('📊 Profile:', profile);
+    console.log('📊 Onboarding Application:', onboardingApplication);
+    console.log('🎫 Onboarding visa path check:', (onboardingApplication as any)?.application?.personalInfo?.visa);
+    console.log('🎫 Onboarding visa info:', onboardingVisa);
+    console.log('🎫 Profile visa info:', profileVisa);
+    
+    return onboardingVisa || profileVisa;
+  };
+
   // Only show this page for OPT visa holders
-  const isOPTVisa = profile?.workAuthorization?.visaType === 'f1-cpt-opt';
+  const isOPTVisa = getVisaType() === 'f1-cpt-opt';
+
+  // Show loading state while data is being fetched
+  if (loading || !isDataLoaded) {
+    return (
+      <Box sx={{ 
+        width: '100%',
+        minHeight: '100vh',
+        padding: { xs: 2, sm: 3, md: 4 },
+        backgroundColor: '#f5f5f5'
+      }}>
+        <Typography variant="h4" gutterBottom>
+          Visa Status Management
+        </Typography>
+        <Box sx={{ width: '100%', mb: 3 }}>
+          <LinearProgress />
+        </Box>
+      </Box>
+    );
+  }
 
   if (!isOPTVisa) {
     return (
@@ -61,11 +115,23 @@ const VisaStatus: React.FC = () => {
   }
 
   const handleFileUpload = async (file: File, documentType: string) => {
+    console.log('🔄 Starting file upload:', { fileName: file.name, documentType, fileSize: file.size });
     setUploadingDocument(documentType);
     try {
-      await dispatch(uploadVisaDocument({ file, type: documentType })).unwrap();
+      console.log('📤 Dispatching uploadVisaDocument action...');
+      const result = await dispatch(uploadVisaDocument({ file, type: documentType })).unwrap();
+      console.log('✅ Upload successful:', result);
+      
+      // Refresh visa status after successful upload
+      console.log('🔄 Refreshing visa status...');
+      await dispatch(fetchVisaStatus()).unwrap();
+      console.log('✅ Visa status refreshed');
+      
+      // Show success message
+      alert(`Document "${file.name}" uploaded successfully!`);
     } catch (error) {
-      console.error('Failed to upload document:', error);
+      console.error('❌ Failed to upload document:', error);
+      alert(`Upload failed: ${error}`);
     } finally {
       setUploadingDocument(null);
     }
@@ -80,10 +146,67 @@ const VisaStatus: React.FC = () => {
     window.open(document.url, '_blank');
   };
 
+  // Helper function to get document from steps array
+  const getDocumentFromSteps = (documentType: string) => {
+    console.log('🔍 getDocumentFromSteps called with:', documentType);
+    console.log('🔍 Current visaStatus:', visaStatus);
+    
+    if (!visaStatus || !visaStatus.steps) {
+      console.log('🔍 No visa status or steps found');
+      return null;
+    }
+    
+    // Map frontend keys to backend types
+    const typeMapping: { [key: string]: string } = {
+      'optReceipt': 'OPT Receipt',
+      'optEad': 'OPT EAD',
+      'i983': 'I-983',
+      'i20': 'I-20'
+    };
+    
+    const backendType = typeMapping[documentType];
+    console.log('🔍 Looking for backend type:', backendType);
+    console.log('🔍 Available steps:', visaStatus.steps.map(s => ({ type: s.type, status: s.status, file: s.file })));
+    
+    const step = visaStatus.steps.find(s => s.type === backendType);
+    console.log('🔍 Found step:', step);
+    
+    if (!step) return null;
+    
+    // Convert step format to document format for compatibility
+    const document = {
+      name: step.file ? step.file.split('/').pop() : step.type,
+      type: step.type,
+      status: step.status,
+      feedback: step.feedback,
+      uploadDate: step.uploadedAt,
+      url: step.file ? `http://localhost:8000${step.file}` : ''
+    };
+    
+    console.log('🔍 Returning document:', document);
+    return document;
+  };
+
   const getStepStatus = (documentType: string) => {
-    const document = visaStatus?.documents[documentType as keyof typeof visaStatus.documents];
-    if (!document) return 'pending';
-    return document.status;
+    const document = getDocumentFromSteps(documentType);
+    if (document?.status) {
+      return document.status;
+    }
+    
+    // If no explicit status but later steps are approved, consider this step approved too
+    const stepIndex = steps.findIndex(s => s.key === documentType);
+    if (stepIndex >= 0) {
+      // Check if any later step is approved
+      for (let i = stepIndex + 1; i < steps.length; i++) {
+        const laterDoc = getDocumentFromSteps(steps[i].key);
+        if (laterDoc?.status === 'approved') {
+          console.log(`🔍 Step ${documentType} has no explicit status, but later step ${steps[i].key} is approved, marking as approved`);
+          return 'approved';
+        }
+      }
+    }
+    
+    return 'pending';
   };
 
   const getStepIcon = (status: string) => {
@@ -104,30 +227,32 @@ const VisaStatus: React.FC = () => {
       key: 'optReceipt',
       label: 'OPT Receipt',
       description: 'Upload your OPT Receipt document',
-      document: visaStatus?.documents?.optReceipt,
+      document: getDocumentFromSteps('optReceipt'),
     },
     {
       key: 'optEad',
       label: 'OPT EAD',
       description: 'Upload your OPT Employment Authorization Document',
-      document: visaStatus?.documents?.optEad,
+      document: getDocumentFromSteps('optEad'),
     },
     {
       key: 'i983',
       label: 'I-983 Form',
       description: 'Download, fill out, and upload the I-983 form',
-      document: visaStatus?.documents?.i983,
+      document: getDocumentFromSteps('i983'),
     },
     {
       key: 'i20',
       label: 'I-20',
       description: 'Upload your new I-20 document',
-      document: visaStatus?.documents?.i20,
+      document: getDocumentFromSteps('i20'),
     },
   ];
 
   const getCurrentStep = () => {
-    if (!visaStatus) return 0;
+    if (!visaStatus || !visaStatus.steps) {
+      return 0;
+    }
     
     for (let i = 0; i < steps.length; i++) {
       const stepStatus = getStepStatus(steps[i].key);
@@ -139,74 +264,135 @@ const VisaStatus: React.FC = () => {
   };
 
   const isStepAvailable = (stepIndex: number) => {
-    if (stepIndex === 0) return true; // First step is always available
+    const onboardingStatus = profile?.onboardingStatus?.trim?.().toLowerCase();
     
-    // Check if previous step is approved
-    const previousStep = steps[stepIndex - 1];
-    return getStepStatus(previousStep.key) === 'approved';
+    console.log(`🔓 Checking step availability for step ${stepIndex}:`, {
+      stepName: steps[stepIndex]?.label,
+      onboardingStatus
+    });
+    
+    // If onboarding is approved, all steps are available
+    if (onboardingStatus === 'approved') {
+      console.log(`✅ Step ${stepIndex} available: onboarding approved`);
+      return true;
+    }
+    
+    // If onboarding is never submitted or rejected, no steps are available
+    if (onboardingStatus === 'never-submitted' || onboardingStatus === 'rejected') {
+      console.log(`❌ Step ${stepIndex} not available: onboarding ${onboardingStatus}`);
+      return false;
+    }
+    
+    // For pending onboarding status, check sequential approval logic
+    if (onboardingStatus === 'pending') {
+      // First step (OPT Receipt) is always available when onboarding is pending
+      if (stepIndex === 0) {
+        console.log(`✅ Step ${stepIndex} available: first step with pending onboarding`);
+        return true;
+      }
+      
+      // For subsequent steps, check if all previous steps are approved
+      console.log(`🔍 Checking previous steps for step ${stepIndex}:`);
+      for (let i = 0; i < stepIndex; i++) {
+        const previousStepStatus = getStepStatus(steps[i].key);
+        console.log(`  - Step ${i} (${steps[i].label}): ${previousStepStatus}`);
+        if (previousStepStatus !== 'approved') {
+          console.log(`❌ Step ${stepIndex} not available: step ${i} not approved`);
+          return false; // Previous step not approved yet
+        }
+      }
+      
+      console.log(`✅ Step ${stepIndex} available: all previous steps approved`);
+      return true; // All previous steps are approved
+    }
+    
+    // Default: not available
+    console.log(`❌ Step ${stepIndex} not available: default case`);
+    return false;
   };
 
   const renderStepContent = (step: any, stepIndex: number) => {
     const status = getStepStatus(step.key);
     const isAvailable = isStepAvailable(stepIndex);
     const document = step.document;
+    
+    console.log(`🎬 Rendering step: ${step.key}`, {
+      status,
+      isAvailable,
+      document,
+      stepIndex,
+      onboardingStatus: profile?.onboardingStatus
+    });
 
-    if (!isAvailable) {
+    // If step is not available AND no document exists, show the blocked message
+    if (!isAvailable && !document) {
+      const onboardingStatus = profile?.onboardingStatus?.trim?.().toLowerCase();
+      let message = "Please wait for the previous step to be approved before proceeding.";
+      
+      if (onboardingStatus === 'never-submitted') {
+        message = "Please complete your onboarding application first.";
+      } else if (onboardingStatus === 'rejected') {
+        message = "Please resubmit your onboarding application.";
+      } else if (onboardingStatus === 'pending' && stepIndex > 0) {
+        // Check which previous step is not approved
+        for (let i = 0; i < stepIndex; i++) {
+          const previousStepStatus = getStepStatus(steps[i].key);
+          if (previousStepStatus !== 'approved') {
+            message = `Please wait for the ${steps[i].label} to be approved before proceeding.`;
+            break;
+          }
+        }
+      }
+      
       return (
         <Alert severity="info" sx={{ mt: 2 }}>
-          Please wait for the previous step to be approved before proceeding.
+          {message}
         </Alert>
       );
     }
 
     return (
       <Box sx={{ mt: 2 }}>
-        {/* Status Messages */}
-        {status === 'pending' && document && (
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            Waiting for HR to approve your {step.label}.
-          </Alert>
-        )}
-
-        {status === 'approved' && stepIndex < steps.length - 1 && (
-          <Alert severity="success" sx={{ mb: 2 }}>
-            {step.label} approved! Please proceed to the next step.
-          </Alert>
-        )}
-
-        {status === 'approved' && stepIndex === steps.length - 1 && (
-          <Alert severity="success" sx={{ mb: 2 }}>
-            All documents have been approved! Your visa status process is complete.
-          </Alert>
-        )}
-
-        {status === 'rejected' && document?.feedback && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            <Typography variant="subtitle2" gutterBottom>
-              Document rejected - HR feedback:
-            </Typography>
-            <Typography variant="body2">
-              {document.feedback}
-            </Typography>
-          </Alert>
-        )}
-
         {/* Step-specific content */}
         {step.key === 'optReceipt' && (
           <Box>
-            {!document ? (
+            {status === 'pending' && document && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                Waiting for HR to approve your OPT Receipt.
+              </Alert>
+            )}
+            {status === 'approved' && (
+              <Alert severity="success" sx={{ mb: 2 }}>
+                Your OPT Receipt has been approved. Please proceed to upload your OPT EAD.
+              </Alert>
+            )}
+            {status === 'rejected' && document?.feedback && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  OPT Receipt rejected - HR feedback:
+                </Typography>
+                <Typography variant="body2">
+                  {document.feedback}
+                </Typography>
+                <Typography variant="body2" sx={{ mt: 1 }}>
+                  Please upload a new OPT Receipt document.
+                </Typography>
+              </Alert>
+            )}
+            
+            {!document && isAvailable ? (
               <Card>
                 <CardContent>
                   <Typography variant="h6" gutterBottom>
                     Upload OPT Receipt
                   </Typography>
                   <Typography variant="body2" color="textSecondary" gutterBottom>
-                    Please upload your OPT Receipt document (submitted during onboarding application).
+                    Please upload your OPT Receipt document.
                   </Typography>
                   <Box sx={{ mt: 2 }}>
                     <input
                       type="file"
-                      accept=".pdf"
+                      accept=".pdf,image/*"
                       style={{ display: 'none' }}
                       id="opt-receipt-upload"
                       onChange={(e) => {
@@ -229,33 +415,78 @@ const VisaStatus: React.FC = () => {
                   </Box>
                 </CardContent>
               </Card>
-            ) : (
-              <Card>
+            ) : null}
+
+            {(status === 'rejected' && isAvailable) && (
+              <Card sx={{ mt: 2 }}>
                 <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    Reupload OPT Receipt
+                  </Typography>
+                  <Typography variant="body2" color="textSecondary" gutterBottom>
+                    Upload a new OPT Receipt document to replace the rejected one.
+                  </Typography>
+                  <Box sx={{ mt: 2 }}>
+                    <input
+                      type="file"
+                      accept=".pdf,image/*"
+                      style={{ display: 'none' }}
+                      id="opt-receipt-reupload"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          handleFileUpload(file, 'opt-receipt');
+                        }
+                      }}
+                    />
+                    <label htmlFor="opt-receipt-reupload">
+                      <Button
+                        variant="contained"
+                        component="span"
+                        startIcon={<CloudUpload />}
+                        disabled={uploadingDocument === 'opt-receipt'}
+                        color="warning"
+                      >
+                        {uploadingDocument === 'opt-receipt' ? 'Uploading...' : 'Upload New OPT Receipt'}
+                      </Button>
+                    </label>
+                  </Box>
+                </CardContent>
+              </Card>
+            )}
+
+            {document && (
+              <Card sx={{ mt: 2 }}>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    Current OPT Receipt
+                  </Typography>
                   <Box display="flex" justifyContent="space-between" alignItems="center">
                     <Box>
-                      <Typography variant="h6">{document.name}</Typography>
+                      <Typography variant="subtitle1">{document.name}</Typography>
                       <Typography variant="body2" color="textSecondary">
                         Uploaded: {new Date(document.uploadDate).toLocaleDateString()}
                       </Typography>
                       <StatusChip status={document.status} sx={{ mt: 1 }} />
                     </Box>
                   </Box>
+                  <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
+                    <Button
+                      startIcon={<Visibility />}
+                      onClick={() => handleViewDocument(document)}
+                      size="small"
+                    >
+                      View
+                    </Button>
+                    <Button
+                      startIcon={<Download />}
+                      onClick={() => handleDownloadDocument(document)}
+                      size="small"
+                    >
+                      Download
+                    </Button>
+                  </Box>
                 </CardContent>
-                <CardActions>
-                  <Button
-                    startIcon={<Visibility />}
-                    onClick={() => handleViewDocument(document)}
-                  >
-                    View
-                  </Button>
-                  <Button
-                    startIcon={<Download />}
-                    onClick={() => handleDownloadDocument(document)}
-                  >
-                    Download
-                  </Button>
-                </CardActions>
               </Card>
             )}
           </Box>
@@ -263,11 +494,38 @@ const VisaStatus: React.FC = () => {
 
         {step.key === 'optEad' && (
           <Box>
-            {status === 'approved' && stepIndex > 0 ? (
-              <Alert severity="success" sx={{ mb: 2 }}>
-                Please upload a copy of your OPT EAD.
+            {/* Show upload message when OPT Receipt is approved and no OPT EAD uploaded yet */}
+            {!document && isAvailable && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  OPT Receipt Approved!
+                </Typography>
+                <Typography variant="body2">
+                  Please upload a copy of your OPT EAD.
+                </Typography>
               </Alert>
-            ) : null}
+            )}
+            
+            {status === 'pending' && document && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                Waiting for HR to approve your OPT EAD.
+              </Alert>
+            )}
+            {status === 'approved' && (
+              <Alert severity="success" sx={{ mb: 2 }}>
+                Please download and fill out the I-983 form.
+              </Alert>
+            )}
+            {status === 'rejected' && document?.feedback && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  OPT EAD rejected - HR feedback:
+                </Typography>
+                <Typography variant="body2">
+                  {document.feedback}
+                </Typography>
+              </Alert>
+            )}
             
             {!document && isAvailable ? (
               <Card>
@@ -338,11 +596,26 @@ const VisaStatus: React.FC = () => {
 
         {step.key === 'i983' && (
           <Box>
-            {status === 'approved' && stepIndex > 0 ? (
-              <Alert severity="success" sx={{ mb: 2 }}>
-                Please download and fill out the I-983 form.
+            {status === 'pending' && document && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                Waiting for HR to approve and sign your I-983.
               </Alert>
-            ) : null}
+            )}
+            {status === 'approved' && (
+              <Alert severity="success" sx={{ mb: 2 }}>
+                Please send the I-983 along with all necessary documents to your school and upload the new I-20.
+              </Alert>
+            )}
+            {status === 'rejected' && document?.feedback && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  I-983 Form rejected - HR feedback:
+                </Typography>
+                <Typography variant="body2">
+                  {document.feedback}
+                </Typography>
+              </Alert>
+            )}
 
             <Box sx={{ display: 'flex', gap: 2, mb: 2, flexDirection: { xs: 'column', sm: 'row' } }}>
               <Box sx={{ flex: 1 }}>
@@ -358,7 +631,7 @@ const VisaStatus: React.FC = () => {
                   <CardActions>
                     <Button
                       startIcon={<Download />}
-                      href="/templates/i983-empty.pdf"
+                      href="/templates/i983-blank.pdf"
                       target="_blank"
                       rel="noopener noreferrer"
                     >
@@ -380,7 +653,7 @@ const VisaStatus: React.FC = () => {
                   <CardActions>
                     <Button
                       startIcon={<Download />}
-                      href="/templates/i983-sample.pdf"
+                      href="/templates/i983-blank.pdf"
                       target="_blank"
                       rel="noopener noreferrer"
                     >
@@ -460,11 +733,26 @@ const VisaStatus: React.FC = () => {
 
         {step.key === 'i20' && (
           <Box>
-            {status === 'approved' && stepIndex > 0 ? (
-              <Alert severity="success" sx={{ mb: 2 }}>
-                Please send the I-983 along with all necessary documents to your school and upload the new I-20.
+            {status === 'pending' && document && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                Waiting for HR to approve your I-20.
               </Alert>
-            ) : null}
+            )}
+            {status === 'approved' && (
+              <Alert severity="success" sx={{ mb: 2 }}>
+                All documents have been approved.
+              </Alert>
+            )}
+            {status === 'rejected' && document?.feedback && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  I-20 rejected - HR feedback:
+                </Typography>
+                <Typography variant="body2">
+                  {document.feedback}
+                </Typography>
+              </Alert>
+            )}
 
             {!document && isAvailable ? (
               <Card>

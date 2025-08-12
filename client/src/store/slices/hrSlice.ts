@@ -8,8 +8,10 @@ export const fetchDashboardStats = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       const response = await api.hr.getDashboardStats();
-      return response.data;
+      console.log('📊 Dashboard stats response:', response.data);
+      return response.data.data || response.data;
     } catch (error: any) {
+      console.error('❌ Dashboard stats error:', error);
       const message = error.response?.data?.message || 'Failed to fetch dashboard stats';
       return rejectWithValue(message);
     }
@@ -18,11 +20,13 @@ export const fetchDashboardStats = createAsyncThunk(
 
 export const fetchAllEmployees = createAsyncThunk(
   'hr/fetchAllEmployees',
-  async (_, { rejectWithValue }) => {
+  async (searchQuery: string | undefined, { rejectWithValue }) => {
     try {
-      const response = await api.hr.employees.getAll();
-      return response.data;
+      const response = await api.hr.employees.getAll(searchQuery);
+      console.log('👥 All employees response:', response.data);
+      return response.data.data || response.data;
     } catch (error: any) {
+      console.error('❌ Fetch employees error:', error);
       const message = error.response?.data?.message || 'Failed to fetch employees';
       return rejectWithValue(message);
     }
@@ -34,8 +38,10 @@ export const searchEmployees = createAsyncThunk(
   async (query: string, { rejectWithValue }) => {
     try {
       const response = await api.hr.employees.search(query);
-      return response.data;
+      console.log('🔍 Search employees response:', response.data);
+      return response.data.data || response.data;
     } catch (error: any) {
+      console.error('❌ Search employees error:', error);
       const message = error.response?.data?.message || 'Failed to search employees';
       return rejectWithValue(message);
     }
@@ -73,9 +79,23 @@ export const fetchRegistrationTokens = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       const response = await api.hr.tokens.getAll();
-      return response.data;
+      // 新的API返回格式: { success: true, tokens: [...], total: number }
+      return response.data.tokens || response.data;
     } catch (error: any) {
       const message = error.response?.data?.message || 'Failed to fetch tokens';
+      return rejectWithValue(message);
+    }
+  }
+);
+
+export const testEmailConfig = createAsyncThunk(
+  'hr/testEmailConfig',
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await api.hr.email.testConfig();
+      return response.data;
+    } catch (error: any) {
+      const message = error.response?.data?.message || 'Failed to test email configuration';
       return rejectWithValue(message);
     }
   }
@@ -86,8 +106,10 @@ export const fetchPendingApplications = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       const response = await api.hr.applications.getPending();
-      return response.data;
+      console.log('📋 Pending applications response:', response.data);
+      return response.data.data || response.data;
     } catch (error: any) {
+      console.error('❌ Fetch pending applications error:', error);
       const message = error.response?.data?.message || 'Failed to fetch applications';
       return rejectWithValue(message);
     }

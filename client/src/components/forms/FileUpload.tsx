@@ -6,6 +6,7 @@ import {
   Paper,
   IconButton,
   Alert,
+  CircularProgress,
 } from '@mui/material';
 import {
   CloudUpload,
@@ -13,8 +14,11 @@ import {
   PictureAsPdf,
   Image,
   InsertDriveFile,
+  CheckCircle,
 } from '@mui/icons-material';
 import { Controller, useFormContext } from 'react-hook-form';
+import { useAppDispatch } from '../../store';
+import { uploadFile } from '../../store/slices/employeeSlice';
 
 interface FileUploadProps {
   name: string;
@@ -34,8 +38,11 @@ const FileUpload: React.FC<FileUploadProps> = ({
   rules,
 }) => {
   const { control, formState: { errors } } = useFormContext();
+  const dispatch = useAppDispatch();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState<{name: string, url: string} | null>(null);
 
   const getFileIcon = (file: File) => {
     if (file.type.startsWith('image/')) return <Image />;
@@ -56,6 +63,35 @@ const FileUpload: React.FC<FileUploadProps> = ({
       return `File size must be less than ${maxSize}MB`;
     }
     return true;
+  };
+
+  const handleFileUpload = async (file: File, onChange: (value: any) => void) => {
+    const validation = validateFile(file);
+    if (validation !== true) {
+      alert(validation);
+      return;
+    }
+
+    setUploading(true);
+    try {
+      console.log('🔼 Uploading file:', file.name);
+      const result = await dispatch(uploadFile({ file, type: 'onboarding-document' })).unwrap();
+      console.log('✅ File uploaded successfully:', result);
+      
+      const uploadedData = {
+        name: file.name,
+        url: result.url
+      };
+      
+      setUploadedFile(uploadedData);
+      // Save the URL to the form field instead of the File object
+      onChange(result.url);
+    } catch (error) {
+      console.error('❌ File upload failed:', error);
+      alert('File upload failed. Please try again.');
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -89,10 +125,7 @@ const FileUpload: React.FC<FileUploadProps> = ({
               const files = Array.from(e.dataTransfer.files);
               if (files.length > 0) {
                 const file = files[0];
-                const validation = validateFile(file);
-                if (validation === true) {
-                  onChange(multiple ? files : file);
-                }
+                handleFileUpload(file, onChange);
               }
             }}
             onClick={() => fileInputRef.current?.click()}
@@ -107,10 +140,7 @@ const FileUpload: React.FC<FileUploadProps> = ({
                 const files = Array.from(e.target.files || []);
                 if (files.length > 0) {
                   const file = files[0];
-                  const validation = validateFile(file);
-                  if (validation === true) {
-                    onChange(multiple ? files : file);
-                  }
+                  handleFileUpload(file, onChange);
                 }
               }}
             />
@@ -124,43 +154,34 @@ const FileUpload: React.FC<FileUploadProps> = ({
             </Typography>
           </Paper>
 
-          {/* Display selected files */}
-          {value && (
+          {/* Display upload status */}
+          {uploading && (
+            <Box sx={{ mt: 2, display: 'flex', alignItems: 'center' }}>
+              <CircularProgress size={20} sx={{ mr: 2 }} />
+              <Typography variant="body2">Uploading file...</Typography>
+            </Box>
+          )}
+
+          {/* Display uploaded file */}
+          {uploadedFile && !uploading && (
             <Box sx={{ mt: 2 }}>
-              {Array.isArray(value) ? (
-                value.map((file: File, index: number) => (
-                  <Paper key={index} sx={{ p: 2, mb: 1, display: 'flex', alignItems: 'center' }}>
-                    {getFileIcon(file)}
-                    <Box sx={{ ml: 2, flexGrow: 1 }}>
-                      <Typography variant="body1">{file.name}</Typography>
-                      <Typography variant="body2" color="textSecondary">
-                        {formatFileSize(file.size)}
-                      </Typography>
-                    </Box>
-                    <IconButton
-                      onClick={() => {
-                        const newFiles = value.filter((_: File, i: number) => i !== index);
-                        onChange(newFiles.length > 0 ? newFiles : null);
-                      }}
-                    >
-                      <Delete />
-                    </IconButton>
-                  </Paper>
-                ))
-              ) : (
-                <Paper sx={{ p: 2, display: 'flex', alignItems: 'center' }}>
-                  {getFileIcon(value)}
-                  <Box sx={{ ml: 2, flexGrow: 1 }}>
-                    <Typography variant="body1">{value.name}</Typography>
-                    <Typography variant="body2" color="textSecondary">
-                      {formatFileSize(value.size)}
-                    </Typography>
-                  </Box>
-                  <IconButton onClick={() => onChange(null)}>
-                    <Delete />
-                  </IconButton>
-                </Paper>
-              )}
+              <Paper sx={{ p: 2, display: 'flex', alignItems: 'center', bgcolor: '#f5f5f5' }}>
+                <CheckCircle color="success" sx={{ mr: 2 }} />
+                <Box sx={{ flexGrow: 1 }}>
+                  <Typography variant="body1">{uploadedFile.name}</Typography>
+                  <Typography variant="body2" color="textSecondary">
+                    Uploaded successfully
+                  </Typography>
+                </Box>
+                <IconButton 
+                  onClick={() => {
+                    setUploadedFile(null);
+                    onChange(null);
+                  }}
+                >
+                  <Delete />
+                </IconButton>
+              </Paper>
             </Box>
           )}
 

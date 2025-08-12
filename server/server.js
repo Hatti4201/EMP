@@ -17,6 +17,8 @@ app.use("/api/onboarding", require("./routes/onboardingRoutes"));
 app.use("/api/hr", require("./routes/hrRoutes"));
 app.use("/api/visa-status", require("./routes/visaRoutes"));
 app.use("/api/upload", require("./routes/uploadRoutes"));
+app.use("/api/files", require("./routes/uploadRoutes")); // Add file download route
+app.use("/files", require("./routes/uploadRoutes")); // Add direct file access route
 
 // connect MongoDB
 mongoose

@@ -28,6 +28,8 @@ import {
   ListItemText,
   ListItemSecondaryAction,
   Divider,
+  Snackbar,
+  AlertTitle,
 } from '@mui/material';
 import {
   Add,
@@ -48,6 +50,7 @@ import {
   fetchRegistrationTokens,
   fetchPendingApplications,
   reviewOnboardingApplication,
+  testEmailConfig,
 } from '../../store/slices/hrSlice';
 
 // Import reusable components
@@ -97,6 +100,18 @@ const HiringManagement: React.FC = () => {
   const [feedback, setFeedback] = useState('');
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [actionType, setActionType] = useState<'approved' | 'rejected' | null>(null);
+  
+  // 新增：成功和错误提示状态
+  const [successSnackbar, setSuccessSnackbar] = useState({
+    open: false,
+    message: '',
+    details: ''
+  });
+  const [errorSnackbar, setErrorSnackbar] = useState({
+    open: false,
+    message: '',
+    details: ''
+  });
 
   const { control, handleSubmit, reset, formState: { errors } } = useForm({
     resolver: yupResolver(tokenSchema),
@@ -117,11 +132,36 @@ const HiringManagement: React.FC = () => {
 
   const onSubmitToken = async (data: TokenForm) => {
     try {
-      await dispatch(generateRegistrationToken(data)).unwrap();
+      const result = await dispatch(generateRegistrationToken(data)).unwrap();
       setTokenDialogOpen(false);
       reset();
-    } catch (error) {
+      
+      // 显示成功消息，根据是否为测试模式显示不同信息
+      if (result.testMode) {
+        setSuccessSnackbar({
+          open: true,
+          message: '测试邮件发送成功！',
+          details: `注册邀请已生成。由于使用测试模式，邮件预览链接已在服务器控制台显示。邮件发送到: ${data.email}`
+        });
+        console.log('📨 Test email preview:', result.previewURL);
+      } else {
+        setSuccessSnackbar({
+          open: true,
+          message: '邮件发送成功！',
+          details: `注册邀请邮件已发送到 ${data.email}。员工将收到一个有效期3小时的注册链接。`
+        });
+        console.log('✅ Email sent successfully to:', result.emailInfo?.to);
+      }
+      
+      // 刷新token列表
+      dispatch(fetchRegistrationTokens());
+    } catch (error: any) {
       console.error('Failed to generate token:', error);
+      setErrorSnackbar({
+        open: true,
+        message: '邮件发送失败',
+        details: typeof error === 'string' ? error : '请检查邮件配置或稍后重试。如果问题持续存在，请联系系统管理员。'
+      });
     }
   };
 
@@ -160,25 +200,56 @@ const HiringManagement: React.FC = () => {
     }
   };
 
-  const getTokenStatus = (token: RegistrationToken) => {
+  // Helper function to determine token status
+  const getTokenStatus = (token: any) => {
     const now = new Date();
-    const expires = new Date(token.expiresAt);
+    const expiresAt = new Date(token.expiresAt);
     
-    if (token.used) return 'used';
-    if (now > expires) return 'expired';
-    return 'active';
+    if (token.used) {
+      return 'used';
+    } else if (expiresAt < now) {
+      return 'expired';
+    } else {
+      return 'active';
+    }
   };
 
+  // Helper function to get token status color
   const getTokenStatusColor = (status: string) => {
     switch (status) {
-      case 'used':
-        return 'success';
-      case 'expired':
-        return 'error';
-      case 'active':
-        return 'warning';
-      default:
-        return 'default';
+      case 'used': return 'success';
+      case 'expired': return 'error';
+      case 'active': return 'warning';
+      default: return 'default';
+    }
+  };
+
+  // Helper function to determine onboarding status
+  const getOnboardingStatus = (token: any) => {
+    return token.onboardingStatus || 'not_registered';
+  };
+
+  // Helper function to get onboarding status color
+  const getOnboardingStatusColor = (status: string) => {
+    switch (status) {
+      case 'approved': return 'success';
+      case 'rejected': return 'error';
+      case 'pending': return 'warning';
+      case 'registered': return 'info';
+      case 'not_registered': return 'default';
+      default: return 'default';
+    }
+  };
+
+  // Helper function to get onboarding status display text
+  const getOnboardingStatusText = (status: string) => {
+    switch (status) {
+      case 'approved': return 'Application Approved';
+      case 'rejected': return 'Application Rejected';
+      case 'pending': return 'Application Pending';
+      case 'registered': return 'Registered (No Application)';
+      case 'not_registered': return 'Not Registered';
+      default: return 'Unknown';
     }
   };
 
@@ -187,19 +258,47 @@ const HiringManagement: React.FC = () => {
   const rejectedApps = pendingApplications.filter(app => app.status === 'rejected');
   const approvedApps = pendingApplications.filter(app => app.status === 'approved');
 
+  const handleTestEmailConfig = async () => {
+    try {
+      const result = await dispatch(testEmailConfig()).unwrap();
+      setSuccessSnackbar({
+        open: true,
+        message: '邮件配置测试成功！',
+        details: '邮件配置验证成功，可以正常发送邮件。'
+      });
+    } catch (error: any) {
+      setErrorSnackbar({
+        open: true,
+        message: '邮件配置测试失败',
+        details: typeof error === 'string' ? error : '邮件配置有问题，请检查邮件服务器设置。'
+      });
+    }
+  };
+
   const renderTokenManagement = () => (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h6">
           Registration Token Management
         </Typography>
-        <Button
-          variant="contained"
-          startIcon={<Add />}
-          onClick={() => setTokenDialogOpen(true)}
-        >
-          Generate Token & Send Email
-        </Button>
+        <Box display="flex" gap={2}>
+          <Button
+            variant="outlined"
+            color="info"
+            startIcon={<Email />}
+            onClick={handleTestEmailConfig}
+            disabled={loading}
+          >
+            Test Email Config
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={<Add />}
+            onClick={() => setTokenDialogOpen(true)}
+          >
+            Generate Token & Send Email
+          </Button>
+        </Box>
       </Box>
 
       {/* Token History */}
@@ -220,7 +319,8 @@ const HiringManagement: React.FC = () => {
                     <TableCell>Email</TableCell>
                     <TableCell>Name</TableCell>
                     <TableCell>Registration Link</TableCell>
-                    <TableCell>Status</TableCell>
+                    <TableCell>Token Status</TableCell>
+                    <TableCell>Onboarding Status</TableCell>
                     <TableCell>Created</TableCell>
                     <TableCell>Expires</TableCell>
                   </TableRow>
@@ -228,11 +328,15 @@ const HiringManagement: React.FC = () => {
                 <TableBody>
                   {registrationTokens.map((token) => (
                     <TableRow key={token._id}>
-                      <TableCell>{token.email}</TableCell>
+                      <TableCell>
+                        <Typography variant="body2" fontWeight={500}>
+                          {token.email}
+                        </Typography>
+                      </TableCell>
                       <TableCell>{token.name || 'N/A'}</TableCell>
                       <TableCell>
-                        <Typography variant="body2" fontFamily="monospace" sx={{ fontSize: '0.75rem' }}>
-                          {`${window.location.origin}/register?token=${token.token}`}
+                        <Typography variant="body2" fontFamily="monospace" sx={{ fontSize: '0.75rem', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {token.registrationLink || `${window.location.origin}/register?token=${token.token}`}
                         </Typography>
                       </TableCell>
                       <TableCell>
@@ -240,6 +344,14 @@ const HiringManagement: React.FC = () => {
                           label={getTokenStatus(token)} 
                           color={getTokenStatusColor(getTokenStatus(token)) as any}
                           variant="outlined"
+                          size="small"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Chip 
+                          label={getOnboardingStatusText(getOnboardingStatus(token))} 
+                          color={getOnboardingStatusColor(getOnboardingStatus(token)) as any}
+                          variant="filled"
                           size="small"
                         />
                       </TableCell>
@@ -486,6 +598,32 @@ const HiringManagement: React.FC = () => {
         confirmText="Approve"
         confirmColor="success"
       />
+
+      {/* Success Snackbar */}
+      <Snackbar
+        open={successSnackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setSuccessSnackbar({ ...successSnackbar, open: false })}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+      >
+        <Alert onClose={() => setSuccessSnackbar({ ...successSnackbar, open: false })} severity="success" sx={{ width: '100%' }}>
+          <AlertTitle>{successSnackbar.message}</AlertTitle>
+          {successSnackbar.details}
+        </Alert>
+      </Snackbar>
+
+      {/* Error Snackbar */}
+      <Snackbar
+        open={errorSnackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setErrorSnackbar({ ...errorSnackbar, open: false })}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+      >
+        <Alert onClose={() => setErrorSnackbar({ ...errorSnackbar, open: false })} severity="error" sx={{ width: '100%' }}>
+          <AlertTitle>{errorSnackbar.message}</AlertTitle>
+          {errorSnackbar.details}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };
