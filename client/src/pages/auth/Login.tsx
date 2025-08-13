@@ -15,7 +15,8 @@ import {
   Snackbar,
 } from '@mui/material';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { loginUser, clearError } from '../../store/slices/authSlice';
+import { loginUser, clearError, verifyToken } from '../../store/slices/authSlice';
+import { fetchEmployeeProfile } from '../../store/slices/employeeSlice';
 import type { LoginForm } from '../../types';
 
 const schema = yup.object({
@@ -28,6 +29,7 @@ const Login: React.FC = () => {
   const location = useLocation();
   const dispatch = useAppDispatch();
   const { loading, error, isAuthenticated, user } = useAppSelector((state) => state.auth);
+  const { profile, loading: profileLoading } = useAppSelector((state) => state.employee);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showSuccessSnackbar, setShowSuccessSnackbar] = useState(false);
 
@@ -39,12 +41,87 @@ const Login: React.FC = () => {
     resolver: yupResolver(schema),
   });
 
+  // State to track if we need to refetch user data after login
+  const [needsUserRefresh, setNeedsUserRefresh] = useState(false);
+  // State to track if we're in the process of redirecting
+  const [isRedirecting, setIsRedirecting] = useState(false);
+
+  // Effect to refetch user data after login to get complete profile including onboardingStatus
   useEffect(() => {
-    if (isAuthenticated) {
-      const from = location.state?.from?.pathname || '/';
-      navigate(from, { replace: true });
+    if (isAuthenticated && needsUserRefresh) {
+      console.log('🔄 Login: Refetching user data with complete profile...');
+      Promise.all([
+        dispatch(verifyToken()),
+        dispatch(fetchEmployeeProfile())
+      ]).then((results) => {
+        console.log('✅ Login: User data and profile refreshed:', results[0].payload, results[1].payload);
+        setNeedsUserRefresh(false);
+      }).catch((error) => {
+        console.error('❌ Login: Failed to refresh user data:', error);
+        setNeedsUserRefresh(false);
+      });
     }
-  }, [isAuthenticated, navigate, location]);
+  }, [isAuthenticated, needsUserRefresh, dispatch]);
+
+  // Effect to redirect after we have complete user data
+  useEffect(() => {
+    if (isAuthenticated && user && !needsUserRefresh) {
+      console.log('🔍 Login: User authenticated, checking redirect...', {
+        userRole: user.role,
+        onboardingStatus: user.onboardingStatus,
+        hasOnboardingStatus: 'onboardingStatus' in user
+      });
+
+      // For HR users, redirect immediately
+      if (user.role === 'hr') {
+        console.log('✅ Login: HR user, redirecting to /hr/home');
+        setIsRedirecting(true);
+        setTimeout(() => {
+          navigate('/hr/home', { replace: true });
+        }, 100); // Small delay to prevent flash
+        return;
+      }
+
+      // For employees, check if we have complete data (both user.onboardingStatus and profile)
+      if (user.role === 'employee') {
+        if (!('onboardingStatus' in user) || user.onboardingStatus === undefined) {
+          console.log('⏳ Login: Employee missing onboardingStatus in user object, will refetch...');
+          setNeedsUserRefresh(true);
+          return;
+        }
+
+        // Also check if we have the profile data to ensure EmployeeHome won't show Access Denied
+        if (!profile || !profile.onboardingStatus) {
+          console.log('⏳ Login: Employee missing profile data, will refetch...', { hasProfile: !!profile, profileStatus: profile?.onboardingStatus });
+          setNeedsUserRefresh(true);
+          return;
+        }
+
+        const normalizedStatus = user.onboardingStatus.trim().toLowerCase();
+        const profileStatus = profile.onboardingStatus.trim().toLowerCase();
+        
+        console.log('🔍 Login: Employee status check:', { 
+          userStatus: normalizedStatus, 
+          profileStatus: profileStatus,
+          statusMatch: normalizedStatus === profileStatus 
+        });
+
+        // Use profile status as it's more reliable for UI decisions
+        setIsRedirecting(true);
+        setTimeout(() => {
+          if (profileStatus === 'approved') {
+            console.log('✅ Login: Profile status approved, redirecting to /employee/home');
+            console.log('✅ Login: Final redirect decision - APPROVED -> /employee/home');
+            navigate('/employee/home', { replace: true });
+          } else {
+            console.log('📝 Login: Profile status not approved, redirecting to /employee/onboarding');
+            console.log('📝 Login: Final redirect decision - NOT APPROVED -> /employee/onboarding');
+            navigate('/employee/onboarding', { replace: true });
+          }
+        }, 100); // Small delay to prevent flash
+      }
+    }
+  }, [isAuthenticated, user, needsUserRefresh, navigate]);
 
   useEffect(() => {
     // Clear error when component mounts
@@ -61,13 +138,43 @@ const Login: React.FC = () => {
   }, [dispatch, location, navigate]);
 
   const onSubmit = async (data: LoginForm) => {
-    dispatch(loginUser(data));
+    try {
+      const result = await dispatch(loginUser(data)).unwrap();
+      console.log('✅ Login: Login successful, setting refresh flag...');
+      setNeedsUserRefresh(true);
+    } catch (error) {
+      console.error('❌ Login: Login failed:', error);
+      // Error is already handled by the slice
+    }
   };
 
   const handleSuccessSnackbarClose = () => {
     setShowSuccessSnackbar(false);
     setSuccessMessage(null);
   };
+
+  // Show loading during redirect to prevent flash
+  if (isRedirecting || needsUserRefresh || (isAuthenticated && user?.role === 'employee' && profileLoading)) {
+    return (
+      <Box
+        sx={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: '#f5f5f5',
+        }}
+      >
+        <Box sx={{ textAlign: 'center' }}>
+          <CircularProgress size={40} />
+          <Typography variant="body1" sx={{ mt: 2 }}>
+            {needsUserRefresh ? 'Loading user data...' : 
+             (profileLoading ? 'Loading profile...' : 'Redirecting...')}
+          </Typography>
+        </Box>
+      </Box>
+    );
+  }
 
   return (
     <Box

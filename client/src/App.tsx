@@ -77,6 +77,8 @@ function AppContent() {
     }
   }, [dispatch]);
 
+
+
   if (loading) {
     return <LoadingScreen />;
   }
@@ -93,7 +95,12 @@ function AppContent() {
           {/* Protected routes - redirect to login if not authenticated */}
           {isAuthenticated ? (
             <Route path="/" element={<Layout />}>
-              <Route index element={<Navigate to={user?.role === 'hr' ? "/hr/home" : "/employee/home"} replace />} />
+              <Route index element={
+                <Navigate 
+                  to={user?.role === 'hr' ? "/hr/home" : "/employee/onboarding"} 
+                  replace 
+                />
+              } />
               
               {/* Employee routes */}
               {user?.role === 'employee' && (

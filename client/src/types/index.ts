@@ -4,6 +4,7 @@ export interface User {
   username: string;
   email: string;
   role: 'employee' | 'hr';
+  onboardingStatus?: 'never-submitted' | 'pending' | 'approved' | 'rejected';
   createdAt: string;
   updatedAt: string;
 }

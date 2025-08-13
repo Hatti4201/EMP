@@ -23,28 +23,36 @@ const EmployeeHome: React.FC = () => {
     }
   }, [dispatch, profile]);
 
-  // Redirect non-approved users to onboarding
+  // Immediate redirect for non-approved users
   useEffect(() => {
-    if (profile && !loading) {
-      const normalizedStatus = profile.onboardingStatus?.trim?.().toLowerCase();
-      console.log('🔍 EmployeeHome: Status check:', normalizedStatus);
+    if (profile) {
+      const currentStatus = profile.onboardingStatus?.trim?.().toLowerCase();
+      console.log('🔍 EmployeeHome: Checking user status:', currentStatus);
       
-      if (normalizedStatus !== 'approved') {
-        console.log('❌ EmployeeHome: Status is not approved, redirecting to onboarding');
+      if (!currentStatus || currentStatus !== 'approved') {
+        console.log('🚨 EmployeeHome: User not approved - redirecting immediately');
         navigate('/employee/onboarding', { replace: true });
+        return;
       }
+      
+      console.log('✅ EmployeeHome: User is approved - staying on page');
     }
-  }, [profile, loading, navigate]);
+  }, [profile, navigate]);
 
-  if (loading) {
+  // Show loading if still fetching data or if profile is incomplete
+  if (loading || !profile) {
+    console.log('🔄 EmployeeHome: Loading or missing profile data:', { loading, profile: !!profile });
     return <LoadingScreen />;
   }
 
-  // Don't render if not approved (will redirect)
-  const normalizedStatus = profile?.onboardingStatus?.trim?.().toLowerCase();
-  if (normalizedStatus !== 'approved') {
+  // Double-check before rendering
+  const currentStatus = profile.onboardingStatus?.trim?.().toLowerCase();
+  if (!currentStatus || currentStatus !== 'approved') {
+    console.log('🚨 EmployeeHome: Final check - user not approved, showing loading');
     return <LoadingScreen />;
   }
+
+
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       <Box

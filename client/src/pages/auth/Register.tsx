@@ -15,7 +15,7 @@ import {
   Snackbar,
 } from '@mui/material';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { registerUser, clearError, clearRegistrationSuccess } from '../../store/slices/authSlice';
+import { registerUser, clearError, clearRegistrationSuccess, logout } from '../../store/slices/authSlice';
 import type { RegistrationForm } from '../../types';
 
 const schema = yup.object({
@@ -53,6 +53,8 @@ const Register: React.FC = () => {
       console.log('🏁 Initializing Register component');
       dispatch(clearError());
       dispatch(clearRegistrationSuccess());
+      // Clear any existing authentication state to prevent auto-redirect
+      dispatch(logout());
       setIsInitialized(true);
     }
   }, [dispatch, isInitialized]);

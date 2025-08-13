@@ -701,22 +701,34 @@ const Onboarding: React.FC = () => {
           
           {(() => {
             console.log('📋 Visa Documentation Data:', {
-              visaStatus: visaStatus?.steps
+              visaStatus: visaStatus?.steps,
+              onboardingDocs: (onboardingApplication as any)?.application?.documents
             });
             
             // Create a comprehensive list of visa documents with status
             const visaDocuments = [];
             
-            // 1. OPT Receipt - check both sources
+            // 1. OPT Receipt - check both sources and prioritize VisaStatus
             const optReceiptFromVisa = visaStatus?.steps?.find(step => step.type === 'OPT Receipt');
+            const optReceiptFromOnboarding = (onboardingApplication as any)?.personalInfo?.visa?.optReceipt;
             
             if (optReceiptFromVisa) {
+              // Prefer OPT Receipt from VisaStatus (more reliable)
               visaDocuments.push({
                 type: 'OPT Receipt',
                 status: optReceiptFromVisa.status,
                 fileName: optReceiptFromVisa.file ? optReceiptFromVisa.file.split('/').pop() : 'N/A',
                 filePath: optReceiptFromVisa.file,
                 uploadDate: optReceiptFromVisa.uploadedAt
+              });
+            } else if (optReceiptFromOnboarding) {
+              // Fallback: show OPT Receipt from onboarding if not in VisaStatus yet
+              visaDocuments.push({
+                type: 'OPT Receipt',
+                status: 'pending',
+                fileName: optReceiptFromOnboarding.split('/').pop() || 'OPT Receipt',
+                filePath: optReceiptFromOnboarding,
+                uploadDate: (onboardingApplication as any)?.submittedAt || new Date().toISOString()
               });
             }
             
@@ -732,6 +744,31 @@ const Onboarding: React.FC = () => {
                   uploadDate: step.uploadedAt
                 }));
               visaDocuments.push(...otherDocs);
+            }
+            
+            // 3. Documents from onboarding application (excluding OPT Receipt to avoid duplication)
+            const onboardingDocs = (onboardingApplication as any)?.documents || [];
+            
+            if (onboardingDocs.length > 0) {
+              const appDocs = onboardingDocs
+                .filter((docPath: string) => docPath && typeof docPath === 'string' && docPath.trim() !== '')
+                .filter((docPath: string) => {
+                  // Exclude OPT Receipt to avoid duplication - check against both sources
+                  const optReceiptPath = optReceiptFromOnboarding;
+                  const optReceiptFromVisaFile = optReceiptFromVisa?.file;
+                  return docPath !== optReceiptPath && docPath !== optReceiptFromVisaFile;
+                })
+                .map((docPath: string, index: number) => {
+                  const fileName = docPath.split('/').pop() || `Document ${index + 1}`;
+                  return {
+                    type: 'Onboarding Document',
+                    status: 'pending',
+                    fileName: fileName,
+                    filePath: docPath,
+                    uploadDate: (onboardingApplication as any)?.submittedAt || new Date().toISOString()
+                  };
+                });
+              visaDocuments.push(...appDocs);
             }
             
             console.log('📋 Processed visa documents:', visaDocuments);
